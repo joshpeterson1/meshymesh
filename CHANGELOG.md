@@ -14,6 +14,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Disconnect command cancels reconnection during backoff period
 - Message search in ConversationsView: filter by text content, sender short name, or sender long name with result count
 - Config save toasts now show "confirmed by device" / "device did not confirm" / "device rejected" based on actual ACK response
+- RadioConfigEditor split into subcomponents: FormFields, LoraConfigSection, ChannelsSection, SecurityConfigSection (from 1,100-line monolith)
+- Device config editor: role, rebroadcast mode, NodeInfo broadcast interval, GPIO, triple-click, LED heartbeat
+- Display config editor: screen timeout, carousel, GPS format, units, OLED type, display mode, flip, compass
+- Power config editor: power saving mode, shutdown timer, sleep durations, BT wait, ADC override
+- Position config editor: GPS enable, fixed position, smart broadcast, intervals, distances, GPIO
+- Bluetooth config editor: enable, pairing mode, fixed PIN
 - Test infrastructure: vitest (frontend) and cargo test (Rust backend) with critical path tests
 - 24 frontend tests covering nodeStore operations (connections, messages, nodes, channels, dedup)
 - 9 Rust tests covering config transaction building and serial frame extraction
