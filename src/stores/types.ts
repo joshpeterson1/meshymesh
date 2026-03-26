@@ -12,6 +12,7 @@ export interface MeshUser {
   shortName: string;
   hwModel: string;
   role: string;
+  hasPublicKey: boolean;
 }
 
 export interface MeshPosition {

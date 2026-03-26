@@ -2,7 +2,14 @@ import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useNodeStore } from "@/stores/nodeStore";
-import { saveConnectionHistoryEntry } from "@/lib/tauri";
+import { saveConnectionHistoryEntry, getAppSettings } from "@/lib/tauri";
+import {
+  loadCachedMessages,
+  saveCachedMessages,
+  appendCachedMessage,
+  saveCachedNodes,
+  cleanStaleNodes,
+} from "@/lib/cache";
 import type {
   MeshNode,
   MeshUser,
@@ -18,6 +25,7 @@ interface RustUserInfo {
   short_name: string;
   hw_model: string;
   role: string;
+  has_public_key: boolean;
 }
 
 interface RustPositionInfo {
@@ -154,6 +162,7 @@ function mapUser(ru: RustUserInfo): MeshUser {
     shortName: ru.short_name,
     hwModel: ru.hw_model,
     role: ru.role,
+    hasPublicKey: ru.has_public_key,
   };
 }
 
@@ -205,6 +214,7 @@ export function useMeshtasticEvents() {
                 shortName: "ME",
                 hwModel: "",
                 role: "CLIENT",
+                hasPublicKey: false,
               },
             );
           }
@@ -223,6 +233,7 @@ export function useMeshtasticEvents() {
                   shortName: p.num.toString(16).slice(-4).toUpperCase(),
                   hwModel: "",
                   role: "CLIENT",
+                  hasPublicKey: false,
                 },
             position: p.position
               ? {
@@ -241,6 +252,12 @@ export function useMeshtasticEvents() {
             isFavorite: p.is_favorite,
           };
           store.upsertMeshNode(p.connection_id, node);
+
+          // Persist nodes to cache (debounced by nature of event frequency)
+          const ndConn = useNodeStore.getState().connections[p.connection_id];
+          if (ndConn) {
+            saveCachedNodes(ndConn.transport, ndConn.transportAddress, ndConn.meshNodes).catch(() => {});
+          }
 
           // If this is our own node, update myUser
           const conn = store.connections[p.connection_id];
@@ -295,6 +312,12 @@ export function useMeshtasticEvents() {
           };
           store.addMessage(p.connection_id, msg);
 
+          // Persist to cache
+          const rxConn = store.connections[p.connection_id];
+          if (rxConn) {
+            appendCachedMessage(rxConn.transport, rxConn.transportAddress, msg).catch(() => {});
+          }
+
           // Toast for incoming messages (not from our own node)
           const msgConn = store.connections[p.connection_id];
           if (msgConn && p.from !== msgConn.myNodeNum) {
@@ -320,6 +343,12 @@ export function useMeshtasticEvents() {
           const { connection_id: sentConnId, local_id, packet_id } = data.payload;
           // Remap the local message ID to the radio's packet ID so ACKs match
           store.remapMessageId(sentConnId, local_id, packet_id.toString());
+
+          // Save the full message list to cache (includes the sent message with new ID)
+          const sentConn = useNodeStore.getState().connections[sentConnId];
+          if (sentConn) {
+            saveCachedMessages(sentConn.transport, sentConn.transportAddress, sentConn.messages).catch(() => {});
+          }
           break;
         }
 
@@ -380,7 +409,55 @@ export function useMeshtasticEvents() {
               ccConn.transportAddress,
               ccConn.label,
               ccConn.myUser?.shortName,
-            ).catch(() => {}); // best-effort
+            ).catch(() => {});
+
+            // Load cached messages and nodes from IndexedDB
+            (async () => {
+              try {
+                const { transport, transportAddress } = ccConn;
+
+                // Load cached messages (merge with any already received during handshake)
+                const cachedMsgs = await loadCachedMessages(transport, transportAddress);
+                if (cachedMsgs.length > 0) {
+                  const currentMsgIds = new Set(ccConn.messages.map((m) => m.id));
+                  const newMsgs = cachedMsgs.filter((m) => !currentMsgIds.has(m.id));
+                  if (newMsgs.length > 0) {
+                    const merged = [...newMsgs, ...ccConn.messages]
+                      .sort((a, b) => a.timestamp - b.timestamp);
+                    const freshStore = useNodeStore.getState();
+                    const freshConn = freshStore.connections[ccConnId];
+                    if (freshConn) {
+                      useNodeStore.setState({
+                        connections: {
+                          ...freshStore.connections,
+                          [ccConnId]: { ...freshConn, messages: merged },
+                        },
+                      });
+                    }
+                  }
+                }
+
+                // Load cached nodes (with stale cleanup)
+                const settings = await getAppSettings().catch(() => ({ staleNodeDays: 7 }));
+                const cachedNodes = await cleanStaleNodes(transport, transportAddress, settings.staleNodeDays);
+                if (Object.keys(cachedNodes).length > 0) {
+                  const freshStore = useNodeStore.getState();
+                  const freshConn = freshStore.connections[ccConnId];
+                  if (freshConn) {
+                    // Merge: device-provided nodes take priority, cached fill in the rest
+                    const mergedNodes = { ...cachedNodes, ...freshConn.meshNodes };
+                    useNodeStore.setState({
+                      connections: {
+                        ...freshStore.connections,
+                        [ccConnId]: { ...freshConn, meshNodes: mergedNodes },
+                      },
+                    });
+                  }
+                }
+              } catch (e) {
+                console.error("Cache load failed:", e);
+              }
+            })();
           }
           break;
         }

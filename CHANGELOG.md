@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - .gitignore for Node, Rust, Tauri, IDE, and OS artifacts
 - GPL-3.0 LICENSE file
 - Git repository initialized
+- Early development notice and current limitations section in README
 
 ### Added
 - Favorite nodes shown with yellow star indicator on avatar in nodes table
@@ -48,6 +49,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Right-click context menu on node rail connections: "Disconnect" for active connections, "Remove" for dead/errored ones
 - Local node designated in nodes list with green avatar ring, "You" badge, and green row tint
 - Local nodes and favorites pinned to top of nodes list regardless of sort
+- Search bar in nodes tab — filters by long name, short name, node ID, hardware model, or hex node number
+- Toast notification system (sonner): incoming messages, connection errors, config save success/failure, reconnect failures
+- App settings persistence (Tauri app data dir): stale node cleanup days (1-30, default 7)
+- App Settings UI in unified settings view with slider for stale node days and cache clear button
+- IndexedDB cache layer for messages (no cap) and nodes, keyed by transport:address
+- Messages cached on receive and send, restored on reconnect (DM history preserved)
+- Nodes cached on discovery, cleaned of stale entries on reconnect based on app setting
+- Clear Cache button removes all saved messages and node history
 
 ### Fixed
 - Serial connection no longer sets DTR high, which was resetting ESP32 devices on connect (caused "Home Action" screen)

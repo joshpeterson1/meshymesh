@@ -624,6 +624,7 @@ fn user_info_from_proto(user: &protobufs::User) -> UserInfo {
         short_name: user.short_name.clone(),
         hw_model,
         role,
+        has_public_key: !user.public_key.is_empty(),
     }
 }
 

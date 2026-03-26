@@ -99,6 +99,7 @@ pub struct UserInfo {
     pub short_name: String,
     pub hw_model: String,
     pub role: String,
+    pub has_public_key: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]

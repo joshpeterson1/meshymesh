@@ -5,12 +5,15 @@ import {
   BatteryLow,
   BatteryMedium,
   BatteryFull,
+  BatteryCharging,
   MapPin,
   Clock,
   ArrowUpDown,
   Star,
   Search,
   X,
+  Lock,
+  Unlock,
 } from "lucide-react";
 import { useNodeStore } from "@/stores/nodeStore";
 import { useUIStore } from "@/stores/uiStore";
@@ -39,6 +42,8 @@ function formatLastHeard(timestamp: number): string {
 function BattIcon({ level }: { level?: number }) {
   if (level == null)
     return <Battery size={14} className="text-zinc-600" />;
+  if (level > 100)
+    return <BatteryCharging size={14} className="text-blue-400" />;
   if (level > 75)
     return <BatteryFull size={14} className="text-green-400" />;
   if (level > 25)
@@ -200,6 +205,7 @@ export function NodesView() {
               <th className="text-center px-4 py-2">Hops</th>
               <th className="text-center px-4 py-2">SNR</th>
               <th className="text-center px-4 py-2">Battery</th>
+              <th className="text-center px-4 py-2">PKI</th>
               <th className="text-center px-4 py-2">Position</th>
               <th className="text-right px-4 py-2">Last Heard</th>
               {selectedId === null && (
@@ -280,9 +286,20 @@ export function NodesView() {
                   <div className="flex items-center justify-center gap-1">
                     <BattIcon level={node.batteryLevel} />
                     <span className="text-xs text-zinc-400">
-                      {node.batteryLevel != null ? `${node.batteryLevel}%` : "—"}
+                      {node.batteryLevel == null
+                        ? "—"
+                        : node.batteryLevel > 100
+                          ? "Powered"
+                          : `${node.batteryLevel}%`}
                     </span>
                   </div>
+                </td>
+                <td className="px-4 py-2.5 text-center">
+                  {node.user.hasPublicKey ? (
+                    <span title="PKI encryption enabled"><Lock size={14} className="text-mesh-green mx-auto" /></span>
+                  ) : (
+                    <span title="No public key"><Unlock size={14} className="text-zinc-600 mx-auto" /></span>
+                  )}
                 </td>
                 <td className="px-4 py-2.5 text-center">
                   {node.position ? (

@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import {
   Settings,
   Wifi,
@@ -5,11 +6,16 @@ import {
   Usb,
   Cpu,
   Cable,
+  Trash2,
+  Sliders,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useNodeStore } from "@/stores/nodeStore";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
 import { RadioConfigEditor } from "@/components/config/RadioConfigEditor";
+import { getAppSettings, setAppSettings, type AppSettings } from "@/lib/tauri";
+import { clearAllCache } from "@/lib/cache";
 import type { TransportType } from "@/stores/types";
 
 const transportIcon: Record<TransportType, typeof Wifi> = {
@@ -44,12 +50,103 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function AppSettingsSection() {
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    getAppSettings().then(setSettings).catch(() => {});
+  }, []);
+
+  const handleSave = async (updated: AppSettings) => {
+    setSaving(true);
+    try {
+      await setAppSettings(updated);
+      setSettings(updated);
+      toast.success("Settings saved");
+    } catch (e) {
+      toast.error("Failed to save settings", { description: String(e) });
+    }
+    setSaving(false);
+  };
+
+  const handleClearCache = async () => {
+    try {
+      await clearAllCache();
+      toast.success("Cache cleared", { description: "Messages and node history removed" });
+    } catch (e) {
+      toast.error("Failed to clear cache", { description: String(e) });
+    }
+  };
+
+  if (!settings) return null;
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <Sliders size={14} className="text-zinc-500" />
+        <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+          App Settings
+        </h3>
+      </div>
+      <div className="bg-zinc-900 rounded-lg border border-zinc-800 px-4 py-2 space-y-0">
+        <div className="flex items-center justify-between py-2 border-b border-zinc-800/50">
+          <div>
+            <label className="text-sm text-zinc-400">Stale Node Cleanup</label>
+            <div className="text-[10px] text-zinc-600">
+              Remove nodes not heard in this many days
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={1}
+              max={30}
+              value={settings.staleNodeDays}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                setSettings({ ...settings, staleNodeDays: val });
+              }}
+              className="w-24 accent-mesh-green"
+            />
+            <span className="text-sm text-zinc-200 font-mono w-8 text-right">
+              {settings.staleNodeDays}d
+            </span>
+            <button
+              onClick={() => handleSave(settings)}
+              disabled={saving}
+              className="text-[10px] text-mesh-green hover:text-mesh-green/80 font-medium"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <label className="text-sm text-zinc-400">Clear Cache</label>
+            <div className="text-[10px] text-zinc-600">
+              Remove all saved messages and node history
+            </div>
+          </div>
+          <button
+            onClick={handleClearCache}
+            className="flex items-center gap-1 px-2.5 py-1 text-xs text-red-400 hover:text-red-300 bg-red-400/10 hover:bg-red-400/15 rounded transition-colors"
+          >
+            <Trash2 size={12} />
+            Clear
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConnectionsDashboard() {
   const connections = useNodeStore((s) => s.connections);
   const connectionOrder = useNodeStore((s) => s.connectionOrder);
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-4 space-y-6">
+    <div>
       <div className="flex items-center gap-2 mb-4">
         <Cable size={18} className="text-zinc-400" />
         <h2 className="text-lg font-semibold text-zinc-100">Connections</h2>
@@ -133,9 +230,14 @@ export function SettingsView() {
   const selectedId = useUIStore((s) => s.selectedConnectionId);
   const connections = useNodeStore((s) => s.connections);
 
-  // Unified view shows connections dashboard
+  // Unified view shows connections dashboard + app settings
   if (selectedId === null) {
-    return <ConnectionsDashboard />;
+    return (
+      <div className="h-full overflow-y-auto px-6 py-4 space-y-6">
+        <ConnectionsDashboard />
+        <AppSettingsSection />
+      </div>
+    );
   }
 
   const conn = connections[selectedId];

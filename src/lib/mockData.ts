@@ -5,31 +5,31 @@ const now = Math.floor(Date.now() / 1000);
 const homeBaseNodes: Record<number, MeshNode> = {
   0xaabbcc01: {
     num: 0xaabbcc01,
-    user: { id: "!aabbcc01", longName: "Home Base", shortName: "HB01", hwModel: "HELTEC_V3", role: "CLIENT" },
+    user: { id: "!aabbcc01", longName: "Home Base", shortName: "HB01", hwModel: "HELTEC_V3", role: "CLIENT", hasPublicKey: false },
     position: { latitude: 39.7392, longitude: -104.9903, altitude: 1609, time: now - 60 },
     snr: 12.5, lastHeard: now - 30, hopsAway: 0, batteryLevel: 98, voltage: 4.15, viaMqtt: false, isFavorite: false,
   },
   0xaabbcc02: {
     num: 0xaabbcc02,
-    user: { id: "!aabbcc02", longName: "Hilltop Relay", shortName: "HR02", hwModel: "TBEAM", role: "ROUTER" },
+    user: { id: "!aabbcc02", longName: "Hilltop Relay", shortName: "HR02", hwModel: "TBEAM", role: "ROUTER", hasPublicKey: false },
     position: { latitude: 39.7452, longitude: -104.9813, altitude: 1720, time: now - 120 },
     snr: 8.0, lastHeard: now - 90, hopsAway: 1, batteryLevel: 76, voltage: 3.92, viaMqtt: false, isFavorite: false,
   },
   0xaabbcc03: {
     num: 0xaabbcc03,
-    user: { id: "!aabbcc03", longName: "Park Node", shortName: "PK03", hwModel: "HELTEC_V3", role: "CLIENT" },
+    user: { id: "!aabbcc03", longName: "Park Node", shortName: "PK03", hwModel: "HELTEC_V3", role: "CLIENT", hasPublicKey: false },
     position: { latitude: 39.7312, longitude: -104.9983, altitude: 1590, time: now - 300 },
     snr: 4.5, lastHeard: now - 180, hopsAway: 2, batteryLevel: 54, voltage: 3.71, viaMqtt: false, isFavorite: false,
   },
   0xaabbcc04: {
     num: 0xaabbcc04,
-    user: { id: "!aabbcc04", longName: "Downtown East", shortName: "DE04", hwModel: "RAK4631", role: "CLIENT" },
+    user: { id: "!aabbcc04", longName: "Downtown East", shortName: "DE04", hwModel: "RAK4631", role: "CLIENT", hasPublicKey: false },
     position: { latitude: 39.7422, longitude: -104.9723, altitude: 1600, time: now - 600 },
     snr: 2.0, lastHeard: now - 450, hopsAway: 2, viaMqtt: false, isFavorite: false,
   },
   0xaabbcc05: {
     num: 0xaabbcc05,
-    user: { id: "!aabbcc05", longName: "MQTT Bridge", shortName: "MQ05", hwModel: "TBEAM", role: "CLIENT_MUTE" },
+    user: { id: "!aabbcc05", longName: "MQTT Bridge", shortName: "MQ05", hwModel: "TBEAM", role: "CLIENT_MUTE", hasPublicKey: false },
     snr: 0, lastHeard: now - 900, hopsAway: 3, viaMqtt: true, isFavorite: false,
   },
 };
@@ -37,19 +37,19 @@ const homeBaseNodes: Record<number, MeshNode> = {
 const mobileNodes: Record<number, MeshNode> = {
   0xddee0001: {
     num: 0xddee0001,
-    user: { id: "!ddee0001", longName: "Mobile Node", shortName: "MB01", hwModel: "TBEAM", role: "CLIENT" },
+    user: { id: "!ddee0001", longName: "Mobile Node", shortName: "MB01", hwModel: "TBEAM", role: "CLIENT", hasPublicKey: false },
     position: { latitude: 39.7502, longitude: -105.0003, altitude: 1650, time: now - 15 },
     snr: 10.0, lastHeard: now - 10, hopsAway: 0, batteryLevel: 72, voltage: 3.88, viaMqtt: false, isFavorite: false,
   },
   0xddee0002: {
     num: 0xddee0002,
-    user: { id: "!ddee0002", longName: "Trail Marker A", shortName: "TA02", hwModel: "HELTEC_V3", role: "ROUTER" },
+    user: { id: "!ddee0002", longName: "Trail Marker A", shortName: "TA02", hwModel: "HELTEC_V3", role: "ROUTER", hasPublicKey: false },
     position: { latitude: 39.7562, longitude: -105.0103, altitude: 1800, time: now - 200 },
     snr: 6.5, lastHeard: now - 120, hopsAway: 1, batteryLevel: 89, voltage: 4.05, viaMqtt: false, isFavorite: false,
   },
   0xddee0003: {
     num: 0xddee0003,
-    user: { id: "!ddee0003", longName: "Summit Repeater", shortName: "SR03", hwModel: "RAK4631", role: "ROUTER" },
+    user: { id: "!ddee0003", longName: "Summit Repeater", shortName: "SR03", hwModel: "RAK4631", role: "ROUTER", hasPublicKey: false },
     position: { latitude: 39.7622, longitude: -105.0203, altitude: 2100, time: now - 500 },
     snr: 3.0, lastHeard: now - 300, hopsAway: 2, batteryLevel: 45, voltage: 3.65, viaMqtt: false, isFavorite: false,
   },

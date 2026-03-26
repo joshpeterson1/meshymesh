@@ -56,6 +56,19 @@ export async function setChannel(connectionId: string, channel: Record<string, u
   return invoke("set_channel", { connectionId, channel });
 }
 
+// App settings
+export interface AppSettings {
+  staleNodeDays: number;
+}
+
+export async function getAppSettings(): Promise<AppSettings> {
+  return invoke("get_app_settings");
+}
+
+export async function setAppSettings(settings: AppSettings): Promise<void> {
+  return invoke("set_app_settings", { settings });
+}
+
 // Connection history
 export interface ConnectionHistoryEntry {
   transport: string;

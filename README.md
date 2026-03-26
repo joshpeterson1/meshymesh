@@ -6,6 +6,8 @@ Connect to multiple Meshtastic radios simultaneously via Serial or WiFi and mana
 
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 
+> **Early Development** -- MeshyMesh is under active development and not yet feature-complete. Core messaging, node discovery, and device configuration work, but several areas are still in progress. See [Current Limitations](#current-limitations) below.
+
 ## Features
 
 - **Multi-connection management** -- connect to several nodes at once via serial (COM) or WiFi (TCP)
@@ -19,6 +21,17 @@ Connect to multiple Meshtastic radios simultaneously via Serial or WiFi and mana
 - **Frequency slot grouping** -- node rail groups connections by channel number with collapsible folders
 - **Device metrics** -- battery level, voltage, channel utilization, air utilization
 - **Role badges** -- color-coded role indicators (Router, Repeater, Tracker, etc.)
+
+## Current Limitations
+
+- **No map view yet** -- the mesh map is a placeholder; interactive mapping with Leaflet is planned
+- **BLE not available** -- Bluetooth is defined in the type system but has no connection UI; only Serial and WiFi work today
+- **Read-only security keys** -- public key, private key, and admin key lists are display-only (backup export is supported)
+- **Read-only advanced LoRa fields** -- bandwidth, spread factor, coding rate, frequency offset, and PA fan settings are view-only
+- **Limited config editors** -- Device, Display, Power, Position, and Bluetooth config have backend support but no UI forms yet
+- **Text messages only** -- no file transfer, waypoints, or structured telemetry payloads
+- **No message search** -- node search works, but there is no search/filter within conversations
+- **Windows only** -- currently developed and tested on Windows; macOS/Linux builds are untested
 
 ## Prerequisites
 
