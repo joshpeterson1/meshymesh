@@ -91,10 +91,23 @@ pub async fn disconnect_node(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> Result<(), MeshError> {
-    let mgr = state.manager.read().await;
-    let tx = mgr.get_command_sender(&connection_id)?;
-    tx.send(ConnectionCommand::Disconnect)
-        .await
-        .map_err(|_| MeshError::ChannelClosed)?;
+    // Remove the handle from the manager immediately so the connection ID
+    // and transport resources (e.g. serial port) are freed for reconnect.
+    let handle = {
+        let mut mgr = state.manager.write().await;
+        mgr.remove(&connection_id)
+            .ok_or_else(|| MeshError::ConnectionNotFound(connection_id.clone()))?
+    };
+
+    // Signal the task to stop
+    let _ = handle.command_tx.send(ConnectionCommand::Disconnect).await;
+
+    // Wait for the task to finish (with timeout to avoid hanging forever)
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        handle.task_handle,
+    )
+    .await;
+
     Ok(())
 }

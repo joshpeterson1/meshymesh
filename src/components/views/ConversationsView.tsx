@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { Send, Hash, User, Check, CheckCheck, Clock, AlertCircle, RotateCw } from "lucide-react";
+import { Send, Hash, User, Check, CheckCheck, Clock, AlertCircle, RotateCw, Search, X } from "lucide-react";
 import { useNodeStore } from "@/stores/nodeStore";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
@@ -46,6 +46,7 @@ export function ConversationsView() {
   const connectionOrder = useNodeStore((s) => s.connectionOrder);
   const addMessage = useNodeStore((s) => s.addMessage);
   const [messageInput, setMessageInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [target, setTarget] = useState<ConversationTarget>({
     type: "channel",
     index: 0,
@@ -88,7 +89,7 @@ export function ConversationsView() {
   }
 
   // Filter messages by selected target
-  const messages = allMessages.filter((msg) => {
+  const targetFiltered = allMessages.filter((msg) => {
     if (isUnified) return true;
     if (target.type === "channel") {
       // Channel messages: broadcast messages on this channel index
@@ -100,6 +101,18 @@ export function ConversationsView() {
       (msg.from === myNodeNum && msg.to === target.nodeNum)
     );
   });
+
+  // Apply search filter
+  const searchLower = searchQuery.toLowerCase().trim();
+  const messages = searchLower
+    ? targetFiltered.filter((msg) => {
+        if (msg.text.toLowerCase().includes(searchLower)) return true;
+        const sender = meshNodes[msg.from];
+        if (sender?.shortName.toLowerCase().includes(searchLower)) return true;
+        if (sender?.longName.toLowerCase().includes(searchLower)) return true;
+        return false;
+      })
+    : targetFiltered;
 
   // Build DM contacts: nodes we've exchanged non-broadcast messages with
   const dmContacts = new Map<number, string>();
@@ -227,6 +240,34 @@ export function ConversationsView() {
 
       {/* Message thread */}
       <div className="flex-1 flex flex-col min-w-0">
+        {/* Search bar */}
+        <div className="px-5 py-2 border-b border-zinc-800">
+          <div className="flex items-center gap-2 bg-zinc-800/60 rounded px-3 py-1.5">
+            <Search size={13} className="text-zinc-500 shrink-0" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search messages..."
+              className="flex-1 bg-transparent text-xs text-zinc-200 placeholder:text-zinc-500 outline-none"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="text-zinc-500 hover:text-zinc-300"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+          {searchLower && (
+            <div className="text-[10px] text-zinc-500 mt-1 px-1">
+              {messages.length} result{messages.length !== 1 ? "s" : ""}
+              {" "}for &ldquo;{searchQuery}&rdquo;
+            </div>
+          )}
+        </div>
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
           {messages.length === 0 && (

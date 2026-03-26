@@ -7,6 +7,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Admin command response tracking: config save commands now return packet IDs, frontend correlates with device ACKs via MessageAck events, 10s timeout fallback for firmware that doesn't respond
+- Admin tracker module (src/lib/adminTracker.ts) with Promise-based tracking, auto-timeout, and 5 tests
+- Connection auto-recovery: automatic reconnect on unexpected disconnect with transport-aware exponential backoff (serial: 5 retries starting 2s, WiFi: 10 retries starting 1s)
+- "reconnecting" connection status with orange pulsing indicator in NodeRail and StatusBar
+- Disconnect command cancels reconnection during backoff period
+- Message search in ConversationsView: filter by text content, sender short name, or sender long name with result count
+- Config save toasts now show "confirmed by device" / "device did not confirm" / "device rejected" based on actual ACK response
+- Test infrastructure: vitest (frontend) and cargo test (Rust backend) with critical path tests
+- 24 frontend tests covering nodeStore operations (connections, messages, nodes, channels, dedup)
+- 9 Rust tests covering config transaction building and serial frame extraction
+- React error boundaries around all view components in ContentArea (crash isolation with recovery UI)
+- IndexedDB schema versioning with incremental migration support in cache.ts
+- Message deduplication by ID in nodeStore.addMessage
+
+### Fixed
+- uiStore: default selectedConnectionId changed from mock "conn-home-base" to null
+- uiStore: removed no-op ternary in selectConnection that always returned "conversations"
+- Disconnect lifecycle race: disconnect_node now removes handle from manager immediately and awaits task completion with 5s timeout
+- Serial channels bounded (256 FromRadio, 32 ToRadio) to prevent unbounded memory growth on busy meshes
+- TCP echo channel bounded (32) to prevent unbounded growth
+- Replaced ~10 silent `.catch(() => {})` with console.warn logging or user-facing toast errors across event hook, NodeRail, SettingsView, and AddConnectionDialog
+
+### Removed
+- Dead mock data file (src/lib/mockData.ts) and loadMockData method from nodeStore
+
+### Added
 - README.md with project overview, setup instructions, and architecture docs
 - .gitignore for Node, Rust, Tauri, IDE, and OS artifacts
 - GPL-3.0 LICENSE file

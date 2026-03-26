@@ -16,6 +16,8 @@ pub enum ConnectionCommand {
     /// Send raw admin message bytes (pre-encoded AdminMessage protobuf)
     SendAdmin {
         admin_bytes: Vec<u8>,
+        /// Pre-generated packet ID for ACK tracking
+        packet_id: u32,
     },
     Disconnect,
 }

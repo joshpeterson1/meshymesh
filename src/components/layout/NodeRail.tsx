@@ -24,6 +24,7 @@ const transportColor: Record<TransportType, string> = {
 const statusDot: Record<ConnectionStatus, string> = {
   connected: "bg-green-400",
   connecting: "bg-yellow-400 animate-pulse",
+  reconnecting: "bg-orange-400 animate-pulse",
   disconnected: "bg-zinc-500",
   error: "bg-red-400",
 };
@@ -88,7 +89,7 @@ export function NodeRail() {
 
   // Load history on mount and when connections change
   useEffect(() => {
-    getConnectionHistory().then(setHistory).catch(() => {});
+    getConnectionHistory().then(setHistory).catch((e) => console.warn("Failed to load connection history:", e));
   }, [connectionOrder.length]);
 
   // Ghost entries: history items not currently connected
@@ -126,7 +127,9 @@ export function NodeRail() {
 
   const handleForgetGhost = async (entry: ConnectionHistoryEntry) => {
     setGhostMenu(null);
-    await forgetConnectionHistoryEntry(entry.transport, entry.address).catch(() => {});
+    await forgetConnectionHistoryEntry(entry.transport, entry.address).catch((e) => {
+      toast.error("Failed to forget history entry", { description: String(e) });
+    });
     setHistory((h) => h.filter((e) => !(e.transport === entry.transport && e.address === entry.address)));
   };
 
@@ -304,7 +307,7 @@ export function NodeRail() {
       {/* Right-click context menu */}
       {contextMenu && (() => {
         const conn = connections[contextMenu.connId];
-        const isAlive = conn?.status === "connected" || conn?.status === "connecting";
+        const isAlive = conn?.status === "connected" || conn?.status === "connecting" || conn?.status === "reconnecting";
         return (
           <div
             ref={menuRef}

@@ -23,36 +23,36 @@ export async function disconnectNode(connectionId: string): Promise<void> {
   return invoke("disconnect_node", { connectionId });
 }
 
-// Config editing commands
-export async function setLoraConfig(connectionId: string, config: Record<string, unknown>): Promise<void> {
+// Config editing commands — all return packet IDs for ACK tracking
+export async function setLoraConfig(connectionId: string, config: Record<string, unknown>): Promise<number[]> {
   return invoke("set_lora_config", { connectionId, config });
 }
 
-export async function setDeviceConfig(connectionId: string, config: Record<string, unknown>): Promise<void> {
+export async function setDeviceConfig(connectionId: string, config: Record<string, unknown>): Promise<number[]> {
   return invoke("set_device_config", { connectionId, config });
 }
 
-export async function setDisplayConfig(connectionId: string, config: Record<string, unknown>): Promise<void> {
+export async function setDisplayConfig(connectionId: string, config: Record<string, unknown>): Promise<number[]> {
   return invoke("set_display_config", { connectionId, config });
 }
 
-export async function setPowerConfig(connectionId: string, config: Record<string, unknown>): Promise<void> {
+export async function setPowerConfig(connectionId: string, config: Record<string, unknown>): Promise<number[]> {
   return invoke("set_power_config", { connectionId, config });
 }
 
-export async function setPositionConfig(connectionId: string, config: Record<string, unknown>): Promise<void> {
+export async function setPositionConfig(connectionId: string, config: Record<string, unknown>): Promise<number[]> {
   return invoke("set_position_config", { connectionId, config });
 }
 
-export async function setBluetoothConfig(connectionId: string, config: Record<string, unknown>): Promise<void> {
+export async function setBluetoothConfig(connectionId: string, config: Record<string, unknown>): Promise<number[]> {
   return invoke("set_bluetooth_config", { connectionId, config });
 }
 
-export async function setSecurityConfig(connectionId: string, config: Record<string, unknown>): Promise<void> {
+export async function setSecurityConfig(connectionId: string, config: Record<string, unknown>): Promise<number[]> {
   return invoke("set_security_config", { connectionId, config });
 }
 
-export async function setChannel(connectionId: string, channel: Record<string, unknown>): Promise<void> {
+export async function setChannel(connectionId: string, channel: Record<string, unknown>): Promise<number[]> {
   return invoke("set_channel", { connectionId, channel });
 }
 

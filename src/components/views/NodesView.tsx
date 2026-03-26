@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import {
   Radio,
   Battery,
@@ -14,6 +14,8 @@ import {
   X,
   Lock,
   Unlock,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { useNodeStore } from "@/stores/nodeStore";
 import { useUIStore } from "@/stores/uiStore";
@@ -97,6 +99,7 @@ export function NodesView() {
   const connectionOrder = useNodeStore((s) => s.connectionOrder);
   const [sortField, setSortField] = useState<SortField>("lastHeard");
   const [search, setSearch] = useState("");
+  const [collapsedSlots, setCollapsedSlots] = useState<Set<number>>(new Set());
 
   // Collect local node numbers to identify "our" nodes
   const localNodeNums = new Set<number>();
@@ -111,18 +114,20 @@ export function NodesView() {
   }
 
   // Gather nodes
-  let nodes: (MeshNode & { connectionLabel?: string })[] = [];
+  type ExtNode = MeshNode & { connectionLabel?: string; slot?: number };
+  let nodes: ExtNode[] = [];
 
   if (selectedId === null) {
-    // Unified view - merge and deduplicate by node num
-    const nodeMap = new Map<number, MeshNode & { connectionLabel?: string }>();
+    // Unified view - merge and deduplicate by node num, track slot
+    const nodeMap = new Map<number, ExtNode>();
     connectionOrder.forEach((cid) => {
       const c = connections[cid];
       if (!c) return;
+      const slot = c.loraConfig?.channelNum ?? 0;
       Object.values(c.meshNodes).forEach((n) => {
         const existing = nodeMap.get(n.num);
         if (!existing || n.lastHeard > existing.lastHeard) {
-          nodeMap.set(n.num, { ...n, connectionLabel: c.label });
+          nodeMap.set(n.num, { ...n, connectionLabel: c.label, slot });
         }
       });
     });
@@ -147,10 +152,37 @@ export function NodesView() {
   }
 
   // Sort within tiers: local node first, then favorites, then the rest
-  const local = sortNodes(nodes.filter((n) => localNodeNums.has(n.num)), sortField);
-  const favorites = sortNodes(nodes.filter((n) => n.isFavorite && !localNodeNums.has(n.num)), sortField);
-  const rest = sortNodes(nodes.filter((n) => !n.isFavorite && !localNodeNums.has(n.num)), sortField);
-  nodes = [...local, ...favorites, ...rest];
+  function tierSort(list: ExtNode[]): ExtNode[] {
+    const l = sortNodes(list.filter((n) => localNodeNums.has(n.num)), sortField);
+    const f = sortNodes(list.filter((n) => n.isFavorite && !localNodeNums.has(n.num)), sortField);
+    const r = sortNodes(list.filter((n) => !n.isFavorite && !localNodeNums.has(n.num)), sortField);
+    return [...l, ...f, ...r];
+  }
+
+  // In unified view, group by slot. In per-connection view, single flat list.
+  const isUnified = selectedId === null;
+  let slotGroups: { slot: number; label: string; nodes: ExtNode[] }[];
+
+  if (isUnified) {
+    const groupMap = new Map<number, ExtNode[]>();
+    for (const n of nodes) {
+      const s = n.slot ?? 0;
+      if (!groupMap.has(s)) groupMap.set(s, []);
+      groupMap.get(s)!.push(n);
+    }
+    slotGroups = Array.from(groupMap.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([slot, slotNodes]) => ({
+        slot,
+        label: slot === 0 ? "Default" : `Freq ${slot}`,
+        nodes: tierSort(slotNodes),
+      }));
+  } else {
+    nodes = tierSort(nodes);
+    slotGroups = [{ slot: -1, label: "", nodes }];
+  }
+
+  const totalCount = slotGroups.reduce((sum, g) => sum + g.nodes.length, 0);
 
   return (
     <div className="h-full flex flex-col">
@@ -159,7 +191,7 @@ export function NodesView() {
         <div className="flex items-center gap-2 shrink-0">
           <Radio size={16} className="text-zinc-400" />
           <span className="text-sm font-medium text-zinc-200">
-            {nodes.length} Nodes
+            {totalCount} Nodes
           </span>
         </div>
         <div className="flex items-center gap-2 flex-1 justify-end">
@@ -214,112 +246,146 @@ export function NodesView() {
             </tr>
           </thead>
           <tbody>
-            {nodes.map((node) => {
-              const isLocal = localNodeNums.has(node.num);
+            {slotGroups.map((group) => {
+              const isCollapsed = collapsedSlots.has(group.slot);
+              const showHeader = isUnified && slotGroups.length > 1;
+              const colSpan = isUnified ? 10 : 9;
+
               return (
-              <tr
-                key={node.num}
-                className={cn(
-                  "border-t border-zinc-800/50 hover:bg-zinc-800/30 transition-colors cursor-pointer",
-                  isLocal && "bg-mesh-green/5",
-                )}
-              >
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-2.5">
-                    <div className={cn(
-                      "relative w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0",
-                      isLocal
-                        ? "bg-mesh-green/20 text-mesh-green ring-1 ring-mesh-green/50"
-                        : "bg-zinc-800 text-zinc-300",
-                    )}>
-                      {node.user.shortName.slice(0, 2).toUpperCase()}
-                      {node.isFavorite && !isLocal && (
-                        <Star size={8} className="absolute -top-0.5 -right-0.5 text-yellow-400 fill-yellow-400" />
-                      )}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm font-medium text-zinc-200">
-                          {node.user.longName}
-                        </span>
-                        {isLocal && (
-                          <span className="text-[9px] font-medium px-1 py-0.5 rounded bg-mesh-green/15 text-mesh-green">
-                            You
+                <React.Fragment key={group.slot}>
+                  {showHeader && (
+                    <tr
+                      className="bg-zinc-900/80 border-t border-zinc-700/50 cursor-pointer hover:bg-zinc-800/50"
+                      onClick={() => {
+                        setCollapsedSlots((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(group.slot)) next.delete(group.slot);
+                          else next.add(group.slot);
+                          return next;
+                        });
+                      }}
+                    >
+                      <td colSpan={colSpan} className="px-4 py-2">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-zinc-400">
+                          {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                          <Radio size={12} />
+                          <span>{group.label}</span>
+                          <span className="text-zinc-600 font-normal">
+                            {group.nodes.length} node{group.nodes.length !== 1 ? "s" : ""}
                           </span>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {!isCollapsed && group.nodes.map((node) => {
+                    const isLocal = localNodeNums.has(node.num);
+                    return (
+                      <tr
+                        key={node.num}
+                        className={cn(
+                          "border-t border-zinc-800/50 hover:bg-zinc-800/30 transition-colors cursor-pointer",
+                          isLocal && "bg-mesh-green/5",
                         )}
-                      </div>
-                      <div className="text-[10px] text-zinc-500">
-                        {node.user.shortName} &middot; {node.user.hwModel}
-                      </div>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-4 py-2.5">
-                  <span
-                    className={cn(
-                      "text-[10px] font-medium px-1.5 py-0.5 rounded",
-                      node.user.role === "ROUTER" || node.user.role === "ROUTER_CLIENT" || node.user.role === "ROUTER_LATE"
-                        ? "bg-blue-400/15 text-blue-400"
-                        : node.user.role === "REPEATER"
-                          ? "bg-purple-400/15 text-purple-400"
-                          : node.user.role === "TRACKER" || node.user.role === "TAK_TRACKER"
-                            ? "bg-orange-400/15 text-orange-400"
-                            : node.user.role === "CLIENT_MUTE" || node.user.role === "CLIENT_HIDDEN"
-                              ? "bg-zinc-700 text-zinc-400"
-                              : "bg-zinc-800 text-zinc-300",
-                    )}
-                  >
-                    {formatRole(node.user.role)}
-                  </span>
-                </td>
-                <td className="px-4 py-2.5 text-center text-xs text-zinc-400">
-                  {node.hopsAway === 0 ? (
-                    <span className="text-mesh-green">Direct</span>
-                  ) : (
-                    node.hopsAway
-                  )}
-                </td>
-                <td className="px-4 py-2.5 text-center">
-                  {isLocal ? <span className="text-xs text-zinc-600">N/A</span> : <SnrBadge snr={node.snr} />}
-                </td>
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center justify-center gap-1">
-                    <BattIcon level={node.batteryLevel} />
-                    <span className="text-xs text-zinc-400">
-                      {node.batteryLevel == null
-                        ? "—"
-                        : node.batteryLevel > 100
-                          ? "Powered"
-                          : `${node.batteryLevel}%`}
-                    </span>
-                  </div>
-                </td>
-                <td className="px-4 py-2.5 text-center">
-                  {node.user.hasPublicKey ? (
-                    <span title="PKI encryption enabled"><Lock size={14} className="text-mesh-green mx-auto" /></span>
-                  ) : (
-                    <span title="No public key"><Unlock size={14} className="text-zinc-600 mx-auto" /></span>
-                  )}
-                </td>
-                <td className="px-4 py-2.5 text-center">
-                  {node.position ? (
-                    <MapPin size={14} className="text-mesh-green mx-auto" />
-                  ) : (
-                    <span className="text-zinc-600 text-xs">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-2.5 text-right">
-                  <div className="flex items-center justify-end gap-1 text-xs text-zinc-400">
-                    <Clock size={10} />
-                    {formatLastHeard(node.lastHeard)}
-                  </div>
-                </td>
-                {selectedId === null && (
-                  <td className="px-4 py-2.5 text-right text-[10px] text-zinc-500">
-                    {node.connectionLabel}
-                  </td>
-                )}
-              </tr>
+                      >
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-2.5">
+                            <div className={cn(
+                              "relative w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0",
+                              isLocal
+                                ? "bg-mesh-green/20 text-mesh-green ring-1 ring-mesh-green/50"
+                                : "bg-zinc-800 text-zinc-300",
+                            )}>
+                              {node.user.shortName.slice(0, 2).toUpperCase()}
+                              {node.isFavorite && !isLocal && (
+                                <Star size={8} className="absolute -top-0.5 -right-0.5 text-yellow-400 fill-yellow-400" />
+                              )}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm font-medium text-zinc-200">
+                                  {node.user.longName}
+                                </span>
+                                {isLocal && (
+                                  <span className="text-[9px] font-medium px-1 py-0.5 rounded bg-mesh-green/15 text-mesh-green">
+                                    You
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-zinc-500">
+                                {node.user.shortName} &middot; {node.user.hwModel}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span
+                            className={cn(
+                              "text-[10px] font-medium px-1.5 py-0.5 rounded",
+                              node.user.role === "ROUTER" || node.user.role === "ROUTER_CLIENT" || node.user.role === "ROUTER_LATE"
+                                ? "bg-blue-400/15 text-blue-400"
+                                : node.user.role === "REPEATER"
+                                  ? "bg-purple-400/15 text-purple-400"
+                                  : node.user.role === "TRACKER" || node.user.role === "TAK_TRACKER"
+                                    ? "bg-orange-400/15 text-orange-400"
+                                    : node.user.role === "CLIENT_MUTE" || node.user.role === "CLIENT_HIDDEN"
+                                      ? "bg-zinc-700 text-zinc-400"
+                                      : "bg-zinc-800 text-zinc-300",
+                            )}
+                          >
+                            {formatRole(node.user.role)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-center text-xs text-zinc-400">
+                          {node.hopsAway === 0 ? (
+                            <span className="text-mesh-green">Direct</span>
+                          ) : (
+                            node.hopsAway
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-center">
+                          {isLocal ? <span className="text-xs text-zinc-600">N/A</span> : <SnrBadge snr={node.snr} />}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center justify-center gap-1">
+                            <BattIcon level={node.batteryLevel} />
+                            <span className="text-xs text-zinc-400">
+                              {node.batteryLevel == null
+                                ? "—"
+                                : node.batteryLevel > 100
+                                  ? "Powered"
+                                  : `${node.batteryLevel}%`}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5 text-center">
+                          {node.user.hasPublicKey ? (
+                            <span title="PKI encryption enabled"><Lock size={14} className="text-mesh-green mx-auto" /></span>
+                          ) : (
+                            <span title="No public key"><Unlock size={14} className="text-zinc-600 mx-auto" /></span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-center">
+                          {node.position ? (
+                            <MapPin size={14} className="text-mesh-green mx-auto" />
+                          ) : (
+                            <span className="text-zinc-600 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <div className="flex items-center justify-end gap-1 text-xs text-zinc-400">
+                            <Clock size={10} />
+                            {formatLastHeard(node.lastHeard)}
+                          </div>
+                        </td>
+                        {isUnified && (
+                          <td className="px-4 py-2.5 text-right text-[10px] text-zinc-500">
+                            {node.connectionLabel}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </React.Fragment>
               );
             })}
           </tbody>

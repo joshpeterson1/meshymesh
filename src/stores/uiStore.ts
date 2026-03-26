@@ -16,7 +16,7 @@ interface UIStoreState {
 }
 
 export const useUIStore = create<UIStoreState>((set) => ({
-  selectedConnectionId: "conn-home-base",
+  selectedConnectionId: null,
   activeView: "conversations",
   unifiedView: "dashboard",
   selectedChannel: 0,
@@ -25,7 +25,7 @@ export const useUIStore = create<UIStoreState>((set) => ({
   selectConnection: (id) =>
     set({
       selectedConnectionId: id,
-      activeView: id ? "conversations" : "conversations",
+      activeView: "conversations",
     }),
   setActiveView: (view) => set({ activeView: view }),
   setUnifiedView: (view) => set({ unifiedView: view }),

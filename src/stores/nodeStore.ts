@@ -9,8 +9,6 @@ import type {
   TransportType,
   LoraConfig,
 } from "./types";
-import { mockConnections, mockConnectionOrder } from "@/lib/mockData";
-
 interface NodeStoreState {
   connections: Record<string, NodeConnection>;
   connectionOrder: string[];
@@ -22,7 +20,6 @@ interface NodeStoreState {
     transport: TransportType,
     address: string,
   ) => void;
-  loadMockData: () => void;
   removeConnection: (id: string) => void;
   reorderConnections: (ids: string[]) => void;
   updateConnectionStatus: (
@@ -80,12 +77,6 @@ export const useNodeStore = create<NodeStoreState>((set) => ({
           ? state.connectionOrder
           : [...state.connectionOrder, id],
       };
-    }),
-
-  loadMockData: () =>
-    set({
-      connections: mockConnections,
-      connectionOrder: mockConnectionOrder,
     }),
 
   removeConnection: (id) =>
@@ -177,6 +168,8 @@ export const useNodeStore = create<NodeStoreState>((set) => ({
     set((state) => {
       const conn = state.connections[connId];
       if (!conn) return state;
+      // Deduplicate by message ID
+      if (conn.messages.some((m) => m.id === msg.id)) return state;
       return {
         connections: {
           ...state.connections,

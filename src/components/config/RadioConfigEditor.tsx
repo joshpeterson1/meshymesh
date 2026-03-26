@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Radio, Hash, Shield, Save, Loader2, Download, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { setLoraConfig, setSecurityConfig, setChannel } from "@/lib/tauri";
+import { trackAdminCommand } from "@/lib/adminTracker";
 import { ConfirmDialog } from "@/components/dialogs/ConfirmDialog";
 import { ChangesDialog, diffConfigs } from "@/components/dialogs/ChangesDialog";
 import type { DeviceConfigs, MeshChannel } from "@/stores/types";
@@ -299,8 +300,16 @@ function LoraConfigSection({
     setSaving(true);
     setError(null);
     try {
-      await setLoraConfig(connectionId, form);
-      toast.success("LoRa config saved", { description: "Device will reboot to apply changes" });
+      const packetIds = await setLoraConfig(connectionId, form);
+      const result = await trackAdminCommand(packetIds);
+      if (result.status === "confirmed") {
+        toast.success("LoRa config confirmed by device", { description: "Device will reboot to apply changes" });
+      } else if (result.status === "failed") {
+        setError(result.error);
+        toast.error("Device rejected LoRa config", { description: result.error });
+      } else {
+        toast.success("LoRa config sent", { description: "Device did not confirm — changes may still apply" });
+      }
     } catch (e) {
       setError(String(e));
       toast.error("Failed to save LoRa config", { description: String(e) });
@@ -598,7 +607,7 @@ function ChannelEditor({
     try {
       const roleInt = form.role === "primary" ? 1 : form.role === "secondary" ? 2 : 0;
       const psk = optionToPsk(form.pskOption);
-      await setChannel(connectionId, {
+      const packetIds = await setChannel(connectionId, {
         index: channel.index,
         role: roleInt,
         settings: {
@@ -613,8 +622,16 @@ function ChannelEditor({
           },
         },
       });
+      const result = await trackAdminCommand(packetIds);
       setEditing(false);
-      toast.success(`Channel ${channel.index} saved`);
+      if (result.status === "confirmed") {
+        toast.success(`Channel ${channel.index} confirmed by device`);
+      } else if (result.status === "failed") {
+        setError(result.error);
+        toast.error(`Channel ${channel.index} rejected`, { description: result.error });
+      } else {
+        toast.success(`Channel ${channel.index} sent`);
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -902,8 +919,16 @@ function SecurityConfigSection({
     setSaving(true);
     setError(null);
     try {
-      await setSecurityConfig(connectionId, form);
-      toast.success("Security config saved", { description: "Device will reboot to apply changes" });
+      const packetIds = await setSecurityConfig(connectionId, form);
+      const result = await trackAdminCommand(packetIds);
+      if (result.status === "confirmed") {
+        toast.success("Security config confirmed by device", { description: "Device will reboot to apply changes" });
+      } else if (result.status === "failed") {
+        setError(result.error);
+        toast.error("Device rejected security config", { description: result.error });
+      } else {
+        toast.success("Security config sent", { description: "Device did not confirm — changes may still apply" });
+      }
     } catch (e) {
       setError(String(e));
       toast.error("Failed to save security config", { description: String(e) });

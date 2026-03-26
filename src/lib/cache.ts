@@ -17,14 +17,22 @@ function connectionKey(transport: string, address: string): string {
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (event) => {
       const db = req.result;
-      if (!db.objectStoreNames.contains(MESSAGES_STORE)) {
-        db.createObjectStore(MESSAGES_STORE);
+      const oldVersion = event.oldVersion;
+
+      // Version 0 → 1: initial schema
+      if (oldVersion < 1) {
+        if (!db.objectStoreNames.contains(MESSAGES_STORE)) {
+          db.createObjectStore(MESSAGES_STORE);
+        }
+        if (!db.objectStoreNames.contains(NODES_STORE)) {
+          db.createObjectStore(NODES_STORE);
+        }
       }
-      if (!db.objectStoreNames.contains(NODES_STORE)) {
-        db.createObjectStore(NODES_STORE);
-      }
+
+      // Future migrations go here:
+      // if (oldVersion < 2) { ... }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

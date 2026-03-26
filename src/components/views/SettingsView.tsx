@@ -55,7 +55,10 @@ function AppSettingsSection() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getAppSettings().then(setSettings).catch(() => {});
+    getAppSettings().then(setSettings).catch((e) => {
+      console.warn("Failed to load app settings:", e);
+      toast.error("Failed to load settings");
+    });
   }, []);
 
   const handleSave = async (updated: AppSettings) => {

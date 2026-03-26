@@ -17,8 +17,8 @@ pub async fn open_serial(
     baud_rate: u32,
 ) -> Result<
     (
-        mpsc::UnboundedReceiver<FromRadio>,
-        mpsc::UnboundedSender<ToRadio>,
+        mpsc::Receiver<FromRadio>,
+        mpsc::Sender<ToRadio>,
     ),
     String,
 > {
@@ -58,8 +58,8 @@ pub async fn open_serial(
 
     let (reader, writer) = tokio::io::split(port);
 
-    let (from_tx, from_rx) = mpsc::unbounded_channel::<FromRadio>();
-    let (to_tx, to_rx) = mpsc::unbounded_channel::<ToRadio>();
+    let (from_tx, from_rx) = mpsc::channel::<FromRadio>(256);
+    let (to_tx, to_rx) = mpsc::channel::<ToRadio>(32);
 
     // Reader starts IMMEDIATELY — no sleep, no drain, ready to receive
     tokio::spawn(serial_reader(reader, from_tx));
@@ -71,7 +71,7 @@ pub async fn open_serial(
 /// Reads bytes from serial, finds 0x94 0xC3 frames, decodes FromRadio protobufs.
 async fn serial_reader(
     mut reader: tokio::io::ReadHalf<tokio_serial::SerialStream>,
-    tx: mpsc::UnboundedSender<FromRadio>,
+    tx: mpsc::Sender<FromRadio>,
 ) {
     let mut buf = Vec::with_capacity(4096);
     let mut read_buf = [0u8; 1024];
@@ -110,7 +110,7 @@ async fn serial_reader(
             match extract_frame(&mut buf) {
                 Some(payload) => match FromRadio::decode(payload.as_slice()) {
                     Ok(packet) => {
-                        if tx.send(packet).is_err() {
+                        if tx.send(packet).await.is_err() {
                             log::warn!("Serial reader: receiver dropped");
                             return;
                         }
@@ -165,7 +165,7 @@ fn extract_frame(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
 /// Writes ToRadio protobufs to serial with proper framing.
 async fn serial_writer(
     mut writer: tokio::io::WriteHalf<tokio_serial::SerialStream>,
-    mut rx: mpsc::UnboundedReceiver<ToRadio>,
+    mut rx: mpsc::Receiver<ToRadio>,
 ) {
     while let Some(packet) = rx.recv().await {
         let payload = packet.encode_to_vec();
@@ -197,4 +197,81 @@ async fn serial_writer(
         log::info!("Serial writer: frame written and flushed successfully");
     }
     log::info!("Serial writer: channel closed, stopping");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_frame(payload: &[u8]) -> Vec<u8> {
+        let len = payload.len();
+        let mut frame = vec![0x94, 0xC3, (len >> 8) as u8, (len & 0xFF) as u8];
+        frame.extend_from_slice(payload);
+        frame
+    }
+
+    #[test]
+    fn extract_frame_valid_payload() {
+        let mut buf = make_frame(b"hello");
+        let result = extract_frame(&mut buf);
+        assert_eq!(result, Some(b"hello".to_vec()));
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn extract_frame_skips_garbage_prefix() {
+        let mut buf = vec![0xFF, 0xAA, 0x00];
+        buf.extend_from_slice(&make_frame(b"data"));
+        let result = extract_frame(&mut buf);
+        assert_eq!(result, Some(b"data".to_vec()));
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn extract_frame_returns_none_on_incomplete() {
+        // Header + length says 10 bytes, but only 3 bytes of payload
+        let mut buf = vec![0x94, 0xC3, 0x00, 0x0A, 0x01, 0x02, 0x03];
+        let result = extract_frame(&mut buf);
+        assert_eq!(result, None);
+        // Buffer should be preserved for more data
+        assert_eq!(buf.len(), 7);
+    }
+
+    #[test]
+    fn extract_frame_returns_none_on_too_short() {
+        let mut buf = vec![0x94, 0xC3];
+        assert_eq!(extract_frame(&mut buf), None);
+    }
+
+    #[test]
+    fn extract_frame_skips_zero_length() {
+        // Zero length is invalid, should skip the header and try again
+        let mut buf = vec![0x94, 0xC3, 0x00, 0x00];
+        buf.extend_from_slice(&make_frame(b"ok"));
+        let result = extract_frame(&mut buf);
+        assert_eq!(result, Some(b"ok".to_vec()));
+    }
+
+    #[test]
+    fn extract_frame_skips_oversized_length() {
+        // Length > MAX_PACKET_SIZE (512), should skip
+        let mut buf = vec![0x94, 0xC3, 0x08, 0x00]; // 2048 bytes
+        buf.extend_from_slice(&make_frame(b"valid"));
+        let result = extract_frame(&mut buf);
+        assert_eq!(result, Some(b"valid".to_vec()));
+    }
+
+    #[test]
+    fn extract_frame_multiple_frames() {
+        let mut buf = make_frame(b"first");
+        buf.extend_from_slice(&make_frame(b"second"));
+
+        let r1 = extract_frame(&mut buf);
+        assert_eq!(r1, Some(b"first".to_vec()));
+
+        let r2 = extract_frame(&mut buf);
+        assert_eq!(r2, Some(b"second".to_vec()));
+
+        assert!(buf.is_empty());
+    }
 }

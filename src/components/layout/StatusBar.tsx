@@ -77,7 +77,7 @@ export function StatusBar() {
     <div className="h-[34px] bg-zinc-900 border-t border-zinc-800 flex items-center px-5 text-[11px] text-zinc-400 gap-5">
       <span className="flex items-center gap-1.5">
         <div
-          className={`w-1.5 h-1.5 rounded-full ${conn.status === "connected" ? "bg-green-400" : conn.status === "error" ? "bg-red-400" : "bg-zinc-500"}`}
+          className={`w-1.5 h-1.5 rounded-full ${conn.status === "connected" ? "bg-green-400" : conn.status === "reconnecting" ? "bg-orange-400 animate-pulse" : conn.status === "error" ? "bg-red-400" : "bg-zinc-500"}`}
         />
         {conn.label}
       </span>
@@ -91,7 +91,11 @@ export function StatusBar() {
       </span>
       <span className="flex items-center gap-1.5">
         <BatteryIcon level={conn.batteryLevel} />
-        {conn.batteryLevel != null ? `${conn.batteryLevel}%` : "N/A"}
+        {conn.batteryLevel == null
+          ? "N/A"
+          : conn.batteryLevel > 100
+            ? "Powered"
+            : `${conn.batteryLevel}%`}
       </span>
       <span className="flex items-center gap-1.5" title="Last activity from this connection">
         <Clock size={12} />

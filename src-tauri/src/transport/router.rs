@@ -18,11 +18,11 @@ impl std::error::Error for RouterError {}
 
 pub struct EchoRouter {
     my_node_num: u32,
-    echo_tx: mpsc::UnboundedSender<MeshPacket>,
+    echo_tx: mpsc::Sender<MeshPacket>,
 }
 
 impl EchoRouter {
-    pub fn new(my_node_num: u32, echo_tx: mpsc::UnboundedSender<MeshPacket>) -> Self {
+    pub fn new(my_node_num: u32, echo_tx: mpsc::Sender<MeshPacket>) -> Self {
         Self {
             my_node_num,
             echo_tx,
@@ -41,7 +41,7 @@ impl PacketRouter<(), RouterError> for EchoRouter {
 
     fn handle_mesh_packet(&mut self, packet: MeshPacket) -> Result<(), RouterError> {
         self.echo_tx
-            .send(packet)
+            .try_send(packet)
             .map_err(|e| RouterError(e.to_string()))?;
         Ok(())
     }

@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useNodeStore } from "@/stores/nodeStore";
 import { saveConnectionHistoryEntry, getAppSettings } from "@/lib/tauri";
+import { notifyAdminAck } from "@/lib/adminTracker";
 import {
   loadCachedMessages,
   saveCachedMessages,
@@ -256,7 +257,7 @@ export function useMeshtasticEvents() {
           // Persist nodes to cache (debounced by nature of event frequency)
           const ndConn = useNodeStore.getState().connections[p.connection_id];
           if (ndConn) {
-            saveCachedNodes(ndConn.transport, ndConn.transportAddress, ndConn.meshNodes).catch(() => {});
+            saveCachedNodes(ndConn.transport, ndConn.transportAddress, ndConn.meshNodes).catch((e) => console.warn("Failed to cache nodes:", e));
           }
 
           // If this is our own node, update myUser
@@ -315,7 +316,7 @@ export function useMeshtasticEvents() {
           // Persist to cache
           const rxConn = store.connections[p.connection_id];
           if (rxConn) {
-            appendCachedMessage(rxConn.transport, rxConn.transportAddress, msg).catch(() => {});
+            appendCachedMessage(rxConn.transport, rxConn.transportAddress, msg).catch((e) => console.warn("Failed to cache message:", e));
           }
 
           // Toast for incoming messages (not from our own node)
@@ -347,7 +348,7 @@ export function useMeshtasticEvents() {
           // Save the full message list to cache (includes the sent message with new ID)
           const sentConn = useNodeStore.getState().connections[sentConnId];
           if (sentConn) {
-            saveCachedMessages(sentConn.transport, sentConn.transportAddress, sentConn.messages).catch(() => {});
+            saveCachedMessages(sentConn.transport, sentConn.transportAddress, sentConn.messages).catch((e) => console.warn("Failed to cache messages:", e));
           }
           break;
         }
@@ -355,6 +356,9 @@ export function useMeshtasticEvents() {
         case "MessageAck": {
           const { connection_id, request_id, from: ackFrom, error_reason } = data.payload;
           const msgId = request_id.toString();
+
+          // Notify admin tracker (no-op if request_id doesn't match any pending admin command)
+          notifyAdminAck(request_id, error_reason);
 
           // Meshtastic Routing::Error codes:
           // 0 = NONE (success), 5 = MAX_RETRANSMIT, others = failure
@@ -409,7 +413,7 @@ export function useMeshtasticEvents() {
               ccConn.transportAddress,
               ccConn.label,
               ccConn.myUser?.shortName,
-            ).catch(() => {});
+            ).catch((e) => console.warn("Failed to save connection history:", e));
 
             // Load cached messages and nodes from IndexedDB
             (async () => {
@@ -438,7 +442,10 @@ export function useMeshtasticEvents() {
                 }
 
                 // Load cached nodes (with stale cleanup)
-                const settings = await getAppSettings().catch(() => ({ staleNodeDays: 7 }));
+                const settings = await getAppSettings().catch((e) => {
+                  console.warn("Failed to load app settings, using defaults:", e);
+                  return { staleNodeDays: 7 };
+                });
                 const cachedNodes = await cleanStaleNodes(transport, transportAddress, settings.staleNodeDays);
                 if (Object.keys(cachedNodes).length > 0) {
                   const freshStore = useNodeStore.getState();

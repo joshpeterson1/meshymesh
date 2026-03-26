@@ -1,4 +1,5 @@
 import { useUIStore } from "@/stores/uiStore";
+import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { ConversationsView } from "@/components/views/ConversationsView";
 import { NodesView } from "@/components/views/NodesView";
 import { MapView } from "@/components/views/MapView";
@@ -9,14 +10,14 @@ export function ContentArea() {
 
   switch (activeView) {
     case "conversations":
-      return <ConversationsView />;
+      return <ErrorBoundary fallbackLabel="Conversations" key="conversations"><ConversationsView /></ErrorBoundary>;
     case "nodes":
-      return <NodesView />;
+      return <ErrorBoundary fallbackLabel="Nodes" key="nodes"><NodesView /></ErrorBoundary>;
     case "map":
-      return <MapView />;
+      return <ErrorBoundary fallbackLabel="Map" key="map"><MapView /></ErrorBoundary>;
     case "settings":
-      return <SettingsView />;
+      return <ErrorBoundary fallbackLabel="Settings" key="settings"><SettingsView /></ErrorBoundary>;
     default:
-      return <ConversationsView />;
+      return <ErrorBoundary fallbackLabel="Conversations" key="conversations"><ConversationsView /></ErrorBoundary>;
   }
 }

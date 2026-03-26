@@ -53,7 +53,7 @@ export function AddConnectionDialog({
   // Scan serial ports and load history when dialog opens
   useEffect(() => {
     if (open) {
-      getConnectionHistory().then(setHistory).catch(() => {});
+      getConnectionHistory().then(setHistory).catch((e) => console.warn("Failed to load connection history:", e));
       if (tab === "serial") scanPorts();
     }
   }, [open, tab]);

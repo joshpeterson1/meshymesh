@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use meshtastic::protobufs::{self, from_radio, mesh_packet, PortNum, ToRadio};
 use prost::Message as ProstMessage;
@@ -14,57 +15,153 @@ pub enum TransportKind {
     Tcp { address: String },
 }
 
+/// Result from an inner connection loop
+enum ConnectionResult {
+    /// User requested disconnect — do not retry
+    CleanDisconnect,
+    /// Connection lost unexpectedly — eligible for retry
+    UnexpectedLoss(String),
+    /// Failed to establish connection — eligible for retry
+    ConnectFailed(String),
+}
+
+struct RetryConfig {
+    max_attempts: u32,
+    initial_delay: Duration,
+    max_delay: Duration,
+}
+
+impl RetryConfig {
+    fn for_serial() -> Self {
+        Self {
+            max_attempts: 5,
+            initial_delay: Duration::from_secs(2),
+            max_delay: Duration::from_secs(30),
+        }
+    }
+
+    fn for_tcp() -> Self {
+        Self {
+            max_attempts: 10,
+            initial_delay: Duration::from_secs(1),
+            max_delay: Duration::from_secs(30),
+        }
+    }
+
+    fn delay_for_attempt(&self, attempt: u32) -> Duration {
+        let secs = self.initial_delay.as_secs_f64() * 2.0_f64.powi(attempt as i32);
+        Duration::from_secs_f64(secs.min(self.max_delay.as_secs_f64()))
+    }
+}
+
 pub async fn run_connection(
     app: AppHandle,
     conn_id: String,
     transport: TransportKind,
-    command_rx: mpsc::Receiver<ConnectionCommand>,
+    mut command_rx: mpsc::Receiver<ConnectionCommand>,
     manager: Arc<RwLock<ConnectionManager>>,
 ) {
     let emit = |event: &NodeEvent| {
         let _ = app.emit("node-event", event);
     };
 
-    emit(&NodeEvent::ConnectionStatus {
-        connection_id: conn_id.clone(),
-        status: "connecting".into(),
-        error: None,
-    });
+    let retry_config = match &transport {
+        TransportKind::Serial { .. } => RetryConfig::for_serial(),
+        TransportKind::Tcp { .. } => RetryConfig::for_tcp(),
+    };
 
-    match transport {
-        TransportKind::Serial { ref port, baud } => {
-            run_serial_connection(
-                app.clone(),
-                conn_id.clone(),
-                port,
-                baud.unwrap_or(115_200),
-                command_rx,
-                manager.clone(),
-            )
-            .await;
-        }
-        TransportKind::Tcp { ref address } => {
-            run_tcp_connection(
-                app.clone(),
-                conn_id.clone(),
-                address,
-                command_rx,
-                manager.clone(),
-            )
-            .await;
+    let mut attempt = 0u32;
+
+    loop {
+        emit(&NodeEvent::ConnectionStatus {
+            connection_id: conn_id.clone(),
+            status: if attempt == 0 { "connecting" } else { "reconnecting" }.into(),
+            error: None,
+        });
+
+        let result = match &transport {
+            TransportKind::Serial { ref port, baud } => {
+                run_serial_connection(
+                    &app,
+                    &conn_id,
+                    port,
+                    baud.unwrap_or(115_200),
+                    &mut command_rx,
+                )
+                .await
+            }
+            TransportKind::Tcp { ref address } => {
+                run_tcp_connection(
+                    &app,
+                    &conn_id,
+                    address,
+                    &mut command_rx,
+                )
+                .await
+            }
+        };
+
+        match result {
+            ConnectionResult::CleanDisconnect => {
+                emit(&NodeEvent::ConnectionStatus {
+                    connection_id: conn_id.clone(),
+                    status: "disconnected".into(),
+                    error: None,
+                });
+                break;
+            }
+            ConnectionResult::UnexpectedLoss(ref err) | ConnectionResult::ConnectFailed(ref err) => {
+                attempt += 1;
+                if attempt > retry_config.max_attempts {
+                    log::warn!("[{}] Max reconnect attempts ({}) reached, giving up", conn_id, retry_config.max_attempts);
+                    emit(&NodeEvent::ConnectionStatus {
+                        connection_id: conn_id.clone(),
+                        status: "error".into(),
+                        error: Some(format!("{} (gave up after {} retries)", err, retry_config.max_attempts)),
+                    });
+                    break;
+                }
+
+                let delay = retry_config.delay_for_attempt(attempt - 1);
+                log::info!("[{}] Connection lost: {}. Retry {}/{} in {:?}", conn_id, err, attempt, retry_config.max_attempts, delay);
+
+                emit(&NodeEvent::ConnectionStatus {
+                    connection_id: conn_id.clone(),
+                    status: "reconnecting".into(),
+                    error: Some(format!("Retry {}/{} in {}s...", attempt, retry_config.max_attempts, delay.as_secs())),
+                });
+
+                // Wait for delay, but check for Disconnect command
+                tokio::select! {
+                    _ = tokio::time::sleep(delay) => {}
+                    cmd = command_rx.recv() => {
+                        if matches!(cmd, Some(ConnectionCommand::Disconnect) | None) {
+                            log::info!("[{}] Disconnect during reconnect backoff", conn_id);
+                            emit(&NodeEvent::ConnectionStatus {
+                                connection_id: conn_id.clone(),
+                                status: "disconnected".into(),
+                                error: None,
+                            });
+                            break;
+                        }
+                        // Other commands during reconnect are dropped (not connected)
+                    }
+                }
+            }
         }
     }
+
+    cleanup(&manager, &conn_id).await;
 }
 
 /// Serial connection using our own framing (bypasses meshtastic crate's broken stream_buffer)
 async fn run_serial_connection(
-    app: AppHandle,
-    conn_id: String,
+    app: &AppHandle,
+    conn_id: &str,
     port: &str,
     baud: u32,
-    mut command_rx: mpsc::Receiver<ConnectionCommand>,
-    manager: Arc<RwLock<ConnectionManager>>,
-) {
+    command_rx: &mut mpsc::Receiver<ConnectionCommand>,
+) -> ConnectionResult {
     let emit = |event: &NodeEvent| {
         let _ = app.emit("node-event", event);
     };
@@ -73,18 +170,12 @@ async fn run_serial_connection(
     let (mut from_radio_rx, to_radio_tx) = match serial::open_serial(port, baud).await {
         Ok(channels) => channels,
         Err(e) => {
-            emit(&NodeEvent::ConnectionStatus {
-                connection_id: conn_id.clone(),
-                status: "error".into(),
-                error: Some(e),
-            });
-            cleanup(&manager, &conn_id).await;
-            return;
+            return ConnectionResult::ConnectFailed(e);
         }
     };
 
     emit(&NodeEvent::ConnectionStatus {
-        connection_id: conn_id.clone(),
+        connection_id: conn_id.to_string(),
         status: "connected".into(),
         error: None,
     });
@@ -94,21 +185,15 @@ async fn run_serial_connection(
     let want_config = ToRadio {
         payload_variant: Some(protobufs::to_radio::PayloadVariant::WantConfigId(config_id)),
     };
-    if to_radio_tx.send(want_config).is_err() {
-        emit(&NodeEvent::ConnectionStatus {
-            connection_id: conn_id.clone(),
-            status: "error".into(),
-            error: Some("Failed to send config request".into()),
-        });
-        cleanup(&manager, &conn_id).await;
-        return;
+    if to_radio_tx.send(want_config).await.is_err() {
+        return ConnectionResult::ConnectFailed("Failed to send config request".into());
     }
 
     log::info!("[{}] Sent WantConfigId: {}", conn_id, config_id);
 
     let mut my_node_num: u32 = 0;
     let mut config_complete = false;
-    let mut disconnect_error: Option<String> = None;
+    let mut user_disconnect = false;
 
     // Main select! loop
     loop {
@@ -117,20 +202,19 @@ async fn run_serial_connection(
                 match packet {
                     Some(from_radio) => {
                         let is_config_complete = process_from_radio(
-                            &app, &conn_id, from_radio, &mut my_node_num,
+                            app, conn_id, from_radio, &mut my_node_num,
                         );
                         if is_config_complete && !config_complete {
                             config_complete = true;
                             emit(&NodeEvent::ConfigComplete {
-                                connection_id: conn_id.clone(),
+                                connection_id: conn_id.to_string(),
                             });
                             log::info!("[{}] Config complete, node_num={}", conn_id, my_node_num);
                         }
                     }
                     None => {
                         log::warn!("[{}] Serial reader closed", conn_id);
-                        disconnect_error = Some("Serial connection lost".into());
-                        break;
+                        return ConnectionResult::UnexpectedLoss("Serial connection lost".into());
                     }
                 }
             }
@@ -140,8 +224,6 @@ async fn run_serial_connection(
                     Some(ConnectionCommand::SendText { local_id, text, destination, channel, want_ack }) => {
                         log::info!("[{}] Sending text: '{}' to {} on ch {}", conn_id, text, destination, channel);
 
-                        // Use from=0 so the firmware fills in the sender address
-                        // and sets up its internal ACK tracking
                         let packet = build_text_packet(
                             0, &text, destination, channel, want_ack,
                         );
@@ -151,12 +233,11 @@ async fn run_serial_connection(
                         let to_radio = ToRadio {
                             payload_variant: Some(protobufs::to_radio::PayloadVariant::Packet(packet)),
                         };
-                        match to_radio_tx.send(to_radio) {
+                        match to_radio_tx.send(to_radio).await {
                             Ok(()) => {
                                 log::info!("[{}] Text message sent, packet_id={}", conn_id, packet_id);
-                                // Tell frontend the mapping: local_id -> packet_id
                                 emit(&NodeEvent::MessageSent {
-                                    connection_id: conn_id.clone(),
+                                    connection_id: conn_id.to_string(),
                                     local_id,
                                     packet_id,
                                 });
@@ -164,22 +245,24 @@ async fn run_serial_connection(
                             Err(e) => log::error!("[{}] Failed to queue text message: {}", conn_id, e),
                         }
                     }
-                    Some(ConnectionCommand::SendAdmin { admin_bytes }) => {
-                        let packet = build_admin_packet(my_node_num, &admin_bytes);
-                        log::info!("[{}] Sending admin packet to node {} ({} bytes)", conn_id, my_node_num, admin_bytes.len());
+                    Some(ConnectionCommand::SendAdmin { admin_bytes, packet_id }) => {
+                        let packet = build_admin_packet(my_node_num, &admin_bytes, packet_id);
+                        log::info!("[{}] Sending admin packet to node {} (id={}, {} bytes)", conn_id, my_node_num, packet_id, admin_bytes.len());
                         let to_radio = ToRadio {
                             payload_variant: Some(protobufs::to_radio::PayloadVariant::Packet(packet)),
                         };
-                        if let Err(e) = to_radio_tx.send(to_radio) {
+                        if let Err(e) = to_radio_tx.send(to_radio).await {
                             log::error!("[{}] Failed to queue admin message: {}", conn_id, e);
                         }
                     }
                     Some(ConnectionCommand::Disconnect) => {
                         log::info!("[{}] Disconnect requested", conn_id);
+                        user_disconnect = true;
                         break;
                     }
                     None => {
                         log::warn!("[{}] Command channel closed", conn_id);
+                        user_disconnect = true;
                         break;
                     }
                 }
@@ -187,24 +270,20 @@ async fn run_serial_connection(
         }
     }
 
-    // Emit a single disconnected status — with error if the connection was lost unexpectedly
-    emit(&NodeEvent::ConnectionStatus {
-        connection_id: conn_id.clone(),
-        status: if disconnect_error.is_some() { "error" } else { "disconnected" }.into(),
-        error: disconnect_error,
-    });
-
-    cleanup(&manager, &conn_id).await;
+    if user_disconnect {
+        ConnectionResult::CleanDisconnect
+    } else {
+        ConnectionResult::UnexpectedLoss("Serial connection lost".into())
+    }
 }
 
 /// TCP connection using the meshtastic crate's StreamApi (works fine for TCP)
 async fn run_tcp_connection(
-    app: AppHandle,
-    conn_id: String,
+    app: &AppHandle,
+    conn_id: &str,
     address: &str,
-    mut command_rx: mpsc::Receiver<ConnectionCommand>,
-    manager: Arc<RwLock<ConnectionManager>>,
-) {
+    command_rx: &mut mpsc::Receiver<ConnectionCommand>,
+) -> ConnectionResult {
     use meshtastic::api::StreamApi;
     use meshtastic::packet::PacketDestination;
     use meshtastic::types::MeshChannel;
@@ -218,20 +297,14 @@ async fn run_tcp_connection(
     let stream = match utils::stream::build_tcp_stream(address.to_string()).await {
         Ok(s) => s,
         Err(e) => {
-            emit(&NodeEvent::ConnectionStatus {
-                connection_id: conn_id.clone(),
-                status: "error".into(),
-                error: Some(format!("TCP connect failed: {}", e)),
-            });
-            cleanup(&manager, &conn_id).await;
-            return;
+            return ConnectionResult::ConnectFailed(format!("TCP connect failed: {}", e));
         }
     };
 
     let (mut packet_rx, stream_api) = stream_api.connect(stream).await;
 
     emit(&NodeEvent::ConnectionStatus {
-        connection_id: conn_id.clone(),
+        connection_id: conn_id.to_string(),
         status: "connected".into(),
         error: None,
     });
@@ -240,38 +313,29 @@ async fn run_tcp_connection(
     let mut stream_api = match stream_api.configure(config_id).await {
         Ok(api) => api,
         Err(e) => {
-            emit(&NodeEvent::ConnectionStatus {
-                connection_id: conn_id.clone(),
-                status: "error".into(),
-                error: Some(format!("Configure failed: {}", e)),
-            });
-            cleanup(&manager, &conn_id).await;
-            return;
+            return ConnectionResult::ConnectFailed(format!("Configure failed: {}", e));
         }
     };
 
     emit(&NodeEvent::ConfigComplete {
-        connection_id: conn_id.clone(),
+        connection_id: conn_id.to_string(),
     });
 
-    let (echo_tx, mut echo_rx) = mpsc::unbounded_channel();
+    let (echo_tx, mut echo_rx) = mpsc::channel(32);
     let mut router = crate::transport::router::EchoRouter::new(0, echo_tx);
     let mut my_node_num: u32 = 0;
+    let mut user_disconnect = false;
 
     loop {
         tokio::select! {
             packet = packet_rx.recv() => {
                 match packet {
                     Some(from_radio) => {
-                        process_from_radio(&app, &conn_id, from_radio, &mut my_node_num);
+                        process_from_radio(app, conn_id, from_radio, &mut my_node_num);
                     }
                     None => {
-                        emit(&NodeEvent::ConnectionStatus {
-                            connection_id: conn_id.clone(),
-                            status: "disconnected".into(),
-                            error: Some("TCP connection lost".into()),
-                        });
-                        break;
+                        let _ = stream_api.disconnect().await;
+                        return ConnectionResult::UnexpectedLoss("TCP connection lost".into());
                     }
                 }
             }
@@ -289,13 +353,11 @@ async fn run_tcp_connection(
                         let mesh_channel = MeshChannel::new(channel).unwrap_or_default();
                         match stream_api.send_text(&mut router, text, dest, want_ack, mesh_channel).await {
                             Ok(()) => {
-                                // send_mesh_packet echoes the built MeshPacket through the router
-                                // synchronously before returning, so the echo is already queued
                                 if let Ok(echoed_packet) = echo_rx.try_recv() {
                                     let packet_id = echoed_packet.id;
                                     log::info!("[{}] TCP text sent, packet_id={}", conn_id, packet_id);
                                     emit(&NodeEvent::MessageSent {
-                                        connection_id: conn_id.clone(),
+                                        connection_id: conn_id.to_string(),
                                         local_id,
                                         packet_id,
                                     });
@@ -308,31 +370,36 @@ async fn run_tcp_connection(
                             }
                         }
                     }
-                    Some(ConnectionCommand::SendAdmin { admin_bytes }) => {
-                        let packet = build_admin_packet(my_node_num, &admin_bytes);
-                        log::info!("[{}] TCP sending admin packet ({} bytes)", conn_id, admin_bytes.len());
+                    Some(ConnectionCommand::SendAdmin { admin_bytes, packet_id }) => {
+                        let packet = build_admin_packet(my_node_num, &admin_bytes, packet_id);
+                        log::info!("[{}] TCP sending admin packet (id={}, {} bytes)", conn_id, packet_id, admin_bytes.len());
                         let to_radio = ToRadio {
                             payload_variant: Some(protobufs::to_radio::PayloadVariant::Packet(packet)),
                         };
-                        // Use the stream_api's internal send method
                         if let Err(e) = stream_api.send_to_radio_packet(to_radio.payload_variant).await {
                             log::error!("[{}] TCP admin send failed: {}", conn_id, e);
                         }
                     }
-                    Some(ConnectionCommand::Disconnect) => break,
-                    None => break,
+                    Some(ConnectionCommand::Disconnect) => {
+                        user_disconnect = true;
+                        break;
+                    }
+                    None => {
+                        user_disconnect = true;
+                        break;
+                    }
                 }
             }
         }
     }
 
     let _ = stream_api.disconnect().await;
-    emit(&NodeEvent::ConnectionStatus {
-        connection_id: conn_id.clone(),
-        status: "disconnected".into(),
-        error: None,
-    });
-    cleanup(&manager, &conn_id).await;
+
+    if user_disconnect {
+        ConnectionResult::CleanDisconnect
+    } else {
+        ConnectionResult::UnexpectedLoss("TCP connection lost".into())
+    }
 }
 
 /// Build a MeshPacket for sending a text message
@@ -648,7 +715,7 @@ fn device_metrics_from_proto(dm: &protobufs::DeviceMetrics) -> DeviceMetricsInfo
 }
 
 /// Build a MeshPacket for sending an AdminMessage to the local node.
-fn build_admin_packet(my_node_num: u32, admin_bytes: &[u8]) -> protobufs::MeshPacket {
+fn build_admin_packet(my_node_num: u32, admin_bytes: &[u8], packet_id: u32) -> protobufs::MeshPacket {
     let data = protobufs::Data {
         portnum: PortNum::AdminApp as i32,
         payload: admin_bytes.to_vec(),
@@ -656,13 +723,11 @@ fn build_admin_packet(my_node_num: u32, admin_bytes: &[u8]) -> protobufs::MeshPa
         ..Default::default()
     };
 
-    let id = rand::random::<u32>();
-
     protobufs::MeshPacket {
         from: 0, // firmware fills in
         to: my_node_num,
         want_ack: true,
-        id,
+        id: packet_id,
         payload_variant: Some(mesh_packet::PayloadVariant::Decoded(data)),
         ..Default::default()
     }
