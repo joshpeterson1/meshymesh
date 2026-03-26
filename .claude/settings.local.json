@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Windows-MCP__Click",
+      "mcp__Windows-MCP__Screenshot",
+      "mcp__Windows-MCP__Shortcut",
+      "mcp__Windows-MCP__Wait",
+      "Bash(npx vite:*)",
+      "WebSearch",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:crates.io)",
+      "Bash(find /c/Users/somber/Documents/GitHub/meshymesh/src -type f -name *AddConnectionDialog* -o -name *addconnection*)",
+      "Bash(cargo check:*)",
+      "Bash(xargs grep:*)",
+      "Bash(find /c/Users/somber/Documents/GitHub/meshymesh -name *.proto)",
+      "Bash(npx tsc:*)",
+      "WebFetch(domain:meshtastic.org)"
+    ]
+  }
+}

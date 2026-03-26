@@ -1,0 +1,84 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/).
+
+## [Unreleased]
+
+### Added
+- README.md with project overview, setup instructions, and architecture docs
+- .gitignore for Node, Rust, Tauri, IDE, and OS artifacts
+- GPL-3.0 LICENSE file
+- Git repository initialized
+
+### Added
+- Favorite nodes shown with yellow star indicator on avatar in nodes table
+- Nodes view sort button cycles through: Last Heard, Name, Hops, SNR, Battery
+- Role badges now color-coded: Router (blue), Repeater (purple), Tracker (orange), Muted/Hidden (grey)
+- CLIENT_BASE role (value 12) added to role display map
+- LoRa config extracted from device Config packets during handshake (channel_num, modem_preset, region)
+- Settings view shows LoRa Configuration section with Frequency Slot, Modem Preset, and Region
+- Node rail groups connections by frequency slot (channel_num) with collapsible Discord-style folders
+- All device Config variants (Device, Position, Power, Display, LoRa, Bluetooth, Security) captured during handshake and stored in frontend
+- AdminMessage command infrastructure: BeginEditSettings → SetConfig → CommitEditSettings transaction pattern
+- Tauri commands for setting all config sections: set_lora_config, set_device_config, set_display_config, set_power_config, set_position_config, set_bluetooth_config, set_security_config, set_channel
+- Backend validation: hop limit 1-7, channel name < 12 bytes, PSK 0/1/16/32 bytes
+- Frontend IPC wrappers for all config commands
+- Radio Config editor in Settings: editable LoRa, Channels, and Security sections with Save buttons
+- Forms disabled when not connected, with warning banner
+- Confirmation dialog for dangerous changes (region, frequency slot, TX disable, serial disable)
+- Changes diff view before commit: shows old → new values for each modified field
+- Config backup/export: "Export Backup" button saves all device config + channels to a JSON file
+- Full channel editor: name, encryption key (none/default/simple/random AES128/AES256), role (secondary/disabled), MQTT uplink/downlink, position precision (0-32 bits), mute notifications
+- Channel PSK change triggers danger confirmation dialog
+- Discard button to revert unsaved channel edits
+- Channel summary row shows key type, uplink/downlink status, position precision, and mute state
+- Backend now sends full channel data (PSK, uplink, downlink, module_settings) during handshake
+- Advanced LoRa fields (bandwidth, spread factor, coding rate, frequency offset, override frequency, RX boosted gain, PA fan) shown behind collapsible toggle, read-only
+- Security: added Managed Mode toggle with danger warning about remote admin requirement
+- Security: public key displayed as hex (read-only), private key obscured with reveal toggle (read-only)
+- Security: admin keys list displayed (read-only)
+- "Backup Keys" button exports public + private keys as {shortName}_keys.txt
+- Connection history persisted to app data dir (up to 20 entries, most recent first)
+- Add Connection dialog: serial ports annotated with last-used device name and time, recent ports sorted first
+- Add Connection dialog: WiFi tab shows clickable recent connections with device name and time
+- Quick reconnect ghost icons in node rail for recently used connections (dashed border, dimmed, one-click reconnect)
+- Right-click ghost icon to forget a history entry
+- Right-click context menu on node rail connections: "Disconnect" for active connections, "Remove" for dead/errored ones
+- Local node designated in nodes list with green avatar ring, "You" badge, and green row tint
+- Local nodes and favorites pinned to top of nodes list regardless of sort
+
+### Fixed
+- Serial connection no longer sets DTR high, which was resetting ESP32 devices on connect (caused "Home Action" screen)
+- Device unplug now emits "error" status (not "disconnected") so the UI shows something went wrong
+- Fixed double-emit on serial disconnect that overwrote the error message with a blank "disconnected" status
+- ACK system rewritten: MessageAck event now carries `from` node and raw `error_reason` instead of just a boolean
+- Fixed `want_response: true` on sent Data payloads — this requests a reply message, not an ACK (ACK is MeshPacket.want_ack)
+- ACKs now correctly distinguish: direct ACK (from destination), implicit ACK (from relay node), max retransmissions, and other failures
+- Added "implicit" (blue check) and "max_retransmit" (yellow rotate) ack status icons with tooltips
+- TCP connections now emit MessageSent events (extracts packet ID from echo router), fixing ACKs never matching on WiFi
+- Serial reader now checks for channel closure on each loop iteration, ensuring COM port is fully released on disconnect (previously the reader could hold the port open indefinitely if the device was idle)
+- Role mapping now uses `as_str_name()` (SCREAMING_SNAKE_CASE) instead of `{:?}` (PascalCase), fixing role badge colors that never matched
+- Roles display with friendly names (e.g., "Router" instead of "ROUTER") and handle unknown firmware roles gracefully
+- `is_favorite` field now extracted from NodeInfo protobuf and forwarded to frontend
+
+### Added
+- Phase 1: Full UI shell with Discord-style layout (node rail, sidebar, content area, status bar)
+- Phase 1: Mock data with two sample nodes (Home Base via Serial, Mobile Node via WiFi)
+- Phase 1: Conversations, Nodes, Map (placeholder), and Settings views
+- Phase 1: Zustand stores for node and UI state management
+- Phase 1: Dark theme with Meshtastic-inspired green accent
+- Phase 2: Rust transport layer with `meshtastic` crate integration
+- Phase 2: ConnectionManager for multi-node async task management
+- Phase 2: Serial and TCP/WiFi connection support
+- Phase 2: Tauri commands: list_serial_ports, connect_serial, connect_tcp, disconnect_node, send_text_message
+- Phase 2: Real-time event emission (node-event) for messages, node discovery, telemetry, channels
+- Phase 2: FromRadio packet processing for TextMessage, Position, NodeInfo, Telemetry, Routing ports
+- Phase 3: Typed Tauri IPC wrappers (`src/lib/tauri.ts`)
+- Phase 3: Event bridge hook mapping Rust snake_case events to Zustand camelCase actions
+- Phase 3: AddConnectionDialog with Serial port dropdown and WiFi IP input
+- Phase 3: Wired + button in NodeRail to open connection dialog
+- Phase 3: Wired send button in ConversationsView with optimistic message display
+- Phase 3: App starts with empty state (no mock data by default)
+- Phase 3: Skeleton connection support (node appears in rail immediately on connect)

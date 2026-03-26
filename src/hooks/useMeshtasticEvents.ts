@@ -1,0 +1,414 @@
+import { useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { toast } from "sonner";
+import { useNodeStore } from "@/stores/nodeStore";
+import { saveConnectionHistoryEntry } from "@/lib/tauri";
+import type {
+  MeshNode,
+  MeshUser,
+  MeshMessage,
+  MeshChannel,
+  ConnectionStatus,
+} from "@/stores/types";
+
+// Rust event payload types (snake_case from serde)
+interface RustUserInfo {
+  id: string;
+  long_name: string;
+  short_name: string;
+  hw_model: string;
+  role: string;
+}
+
+interface RustPositionInfo {
+  latitude: number;
+  longitude: number;
+  altitude: number | null;
+  time: number;
+}
+
+interface RustDeviceMetricsInfo {
+  battery_level: number | null;
+  voltage: number | null;
+  channel_utilization: number | null;
+  air_util_tx: number | null;
+  uptime_seconds: number | null;
+}
+
+type NodeEvent =
+  | {
+      kind: "ConnectionStatus";
+      payload: {
+        connection_id: string;
+        status: string;
+        error: string | null;
+      };
+    }
+  | {
+      kind: "MyNodeInfo";
+      payload: { connection_id: string; my_node_num: number };
+    }
+  | {
+      kind: "NodeDiscovered";
+      payload: {
+        connection_id: string;
+        num: number;
+        user: RustUserInfo | null;
+        position: RustPositionInfo | null;
+        snr: number;
+        last_heard: number;
+        hops_away: number | null;
+        via_mqtt: boolean;
+        is_favorite: boolean;
+        device_metrics: RustDeviceMetricsInfo | null;
+      };
+    }
+  | {
+      kind: "ChannelReceived";
+      payload: {
+        connection_id: string;
+        index: number;
+        name: string;
+        role: string;
+        psk: number[];
+        uplink_enabled: boolean;
+        downlink_enabled: boolean;
+        position_precision: number;
+        is_client_muted: boolean;
+      };
+    }
+  | {
+      kind: "MessageReceived";
+      payload: {
+        connection_id: string;
+        id: number;
+        from: number;
+        to: number;
+        channel: number;
+        text: string;
+        rx_time: number;
+        rx_snr: number;
+        rx_rssi: number;
+        hop_start: number;
+        hop_limit: number;
+        via_mqtt: boolean;
+      };
+    }
+  | {
+      kind: "DeviceMetricsUpdate";
+      payload: {
+        connection_id: string;
+        node_num: number;
+        battery_level: number | null;
+        voltage: number | null;
+      };
+    }
+  | {
+      kind: "MessageSent";
+      payload: {
+        connection_id: string;
+        local_id: string;
+        packet_id: number;
+      };
+    }
+  | {
+      kind: "MessageAck";
+      payload: {
+        connection_id: string;
+        request_id: number;
+        from: number;
+        error_reason: number;
+      };
+    }
+  | {
+      kind: "DeviceConfigReceived";
+      payload: {
+        connection_id: string;
+        config_type: string;
+        config: Record<string, unknown>;
+      };
+    }
+  | {
+      kind: "LoraConfigReceived";
+      payload: {
+        connection_id: string;
+        channel_num: number;
+        modem_preset: string;
+        region: string;
+      };
+    }
+  | { kind: "ConfigComplete"; payload: { connection_id: string } }
+  | {
+      kind: "UserUpdate";
+      payload: {
+        connection_id: string;
+        num: number;
+        user: RustUserInfo;
+      };
+    };
+
+function mapUser(ru: RustUserInfo): MeshUser {
+  return {
+    id: ru.id,
+    longName: ru.long_name,
+    shortName: ru.short_name,
+    hwModel: ru.hw_model,
+    role: ru.role,
+  };
+}
+
+export function useMeshtasticEvents() {
+  useEffect(() => {
+    const unlisten = listen<NodeEvent>("node-event", (event) => {
+      const data = event.payload;
+      const store = useNodeStore.getState();
+
+      switch (data.kind) {
+        case "ConnectionStatus": {
+          const { connection_id, status, error } = data.payload;
+
+          // If this is a new connection we haven't seen, create a skeleton
+          if (!store.connections[connection_id] && status === "connecting") {
+            // Skeleton will be filled in by subsequent events
+            // The connection metadata (label, transport, address) is set by
+            // the addConnection call in the dialog before events arrive
+          }
+
+          store.updateConnectionStatus(
+            connection_id,
+            status as ConnectionStatus,
+            error ?? undefined,
+          );
+
+          // Toast for connection state changes
+          const csConn = store.connections[connection_id];
+          const csLabel = csConn?.myUser?.shortName || csConn?.label || connection_id.slice(0, 8);
+          if (status === "error") {
+            toast.error(error ?? "Connection error", { description: csLabel });
+          } else if (status === "disconnected" && error) {
+            toast.warning("Connection lost", { description: `${csLabel}: ${error}` });
+          }
+          break;
+        }
+
+        case "MyNodeInfo": {
+          const { connection_id, my_node_num } = data.payload;
+          // Store the node num; user info arrives via NodeDiscovered/UserUpdate
+          const conn = store.connections[connection_id];
+          if (conn) {
+            store.setMyNodeInfo(
+              connection_id,
+              my_node_num,
+              conn.myUser ?? {
+                id: `!${my_node_num.toString(16)}`,
+                longName: "My Node",
+                shortName: "ME",
+                hwModel: "",
+                role: "CLIENT",
+              },
+            );
+          }
+          break;
+        }
+
+        case "NodeDiscovered": {
+          const p = data.payload;
+          const node: MeshNode = {
+            num: p.num,
+            user: p.user
+              ? mapUser(p.user)
+              : {
+                  id: `!${p.num.toString(16)}`,
+                  longName: `Node ${p.num.toString(16)}`,
+                  shortName: p.num.toString(16).slice(-4).toUpperCase(),
+                  hwModel: "",
+                  role: "CLIENT",
+                },
+            position: p.position
+              ? {
+                  latitude: p.position.latitude,
+                  longitude: p.position.longitude,
+                  altitude: p.position.altitude ?? 0,
+                  time: p.position.time,
+                }
+              : undefined,
+            snr: p.snr,
+            lastHeard: p.last_heard,
+            hopsAway: p.hops_away ?? 0,
+            batteryLevel: p.device_metrics?.battery_level ?? undefined,
+            voltage: p.device_metrics?.voltage ?? undefined,
+            viaMqtt: p.via_mqtt,
+            isFavorite: p.is_favorite,
+          };
+          store.upsertMeshNode(p.connection_id, node);
+
+          // If this is our own node, update myUser
+          const conn = store.connections[p.connection_id];
+          if (conn && conn.myNodeNum === p.num && p.user) {
+            store.setMyNodeInfo(
+              p.connection_id,
+              p.num,
+              mapUser(p.user),
+            );
+          }
+          break;
+        }
+
+        case "ChannelReceived": {
+          const {
+            connection_id, index, name, role,
+            psk, uplink_enabled, downlink_enabled,
+            position_precision, is_client_muted,
+          } = data.payload;
+          const conn = store.connections[connection_id];
+          if (conn) {
+            const channel: MeshChannel = {
+              index,
+              name,
+              role: role as MeshChannel["role"],
+              psk: psk ?? [],
+              uplinkEnabled: uplink_enabled,
+              downlinkEnabled: downlink_enabled,
+              positionPrecision: position_precision,
+              isClientMuted: is_client_muted,
+            };
+            const existing = conn.channels.filter((c) => c.index !== index);
+            store.setChannels(connection_id, [...existing, channel].sort((a, b) => a.index - b.index));
+          }
+          break;
+        }
+
+        case "MessageReceived": {
+          const p = data.payload;
+          const msg: MeshMessage = {
+            id: p.id.toString(),
+            from: p.from,
+            to: p.to,
+            channel: p.channel,
+            text: p.text,
+            timestamp: p.rx_time,
+            rxSnr: p.rx_snr,
+            rxRssi: p.rx_rssi,
+            hopStart: p.hop_start,
+            hopLimit: p.hop_limit,
+            ackStatus: "none",
+          };
+          store.addMessage(p.connection_id, msg);
+
+          // Toast for incoming messages (not from our own node)
+          const msgConn = store.connections[p.connection_id];
+          if (msgConn && p.from !== msgConn.myNodeNum) {
+            const senderNode = msgConn.meshNodes[p.from];
+            const senderName = senderNode?.user.shortName ?? `!${p.from.toString(16)}`;
+            toast(p.text, {
+              description: `from ${senderName}`,
+              duration: 4000,
+            });
+          }
+          break;
+        }
+
+        case "DeviceMetricsUpdate": {
+          const { connection_id, battery_level, voltage } = data.payload;
+          if (battery_level != null && voltage != null) {
+            store.updateBattery(connection_id, battery_level, voltage);
+          }
+          break;
+        }
+
+        case "MessageSent": {
+          const { connection_id: sentConnId, local_id, packet_id } = data.payload;
+          // Remap the local message ID to the radio's packet ID so ACKs match
+          store.remapMessageId(sentConnId, local_id, packet_id.toString());
+          break;
+        }
+
+        case "MessageAck": {
+          const { connection_id, request_id, from: ackFrom, error_reason } = data.payload;
+          const msgId = request_id.toString();
+
+          // Meshtastic Routing::Error codes:
+          // 0 = NONE (success), 5 = MAX_RETRANSMIT, others = failure
+          const MAX_RETRANSMIT = 5;
+
+          let status: MeshMessage["ackStatus"];
+          if (error_reason === 0) {
+            // Success — check if direct ACK (from destination) or implicit (from relay)
+            const conn = store.connections[connection_id];
+            const msg = conn?.messages.find((m) => m.id === msgId);
+            status = msg && msg.to === ackFrom ? "acked" : "implicit";
+          } else if (error_reason === MAX_RETRANSMIT) {
+            status = "max_retransmit";
+          } else {
+            status = "failed";
+          }
+
+          store.updateMessageAck(connection_id, msgId, status);
+          break;
+        }
+
+        case "DeviceConfigReceived": {
+          const { connection_id: dcConnId, config_type, config } = data.payload as {
+            connection_id: string;
+            config_type: string;
+            config: Record<string, unknown>;
+          };
+          store.setDeviceConfig(dcConnId, config_type, config);
+          break;
+        }
+
+        case "LoraConfigReceived": {
+          const { connection_id: loraConnId, channel_num, modem_preset, region } = data.payload;
+          store.setLoraConfig(loraConnId, {
+            channelNum: channel_num,
+            modemPreset: modem_preset,
+            region,
+          });
+          break;
+        }
+
+        case "ConfigComplete": {
+          // Config is done — connection is fully ready
+          const ccConnId = data.payload.connection_id;
+          store.updateConnectionStatus(ccConnId, "connected");
+
+          // Save to connection history for quick reconnect
+          const ccConn = store.connections[ccConnId];
+          if (ccConn) {
+            saveConnectionHistoryEntry(
+              ccConn.transport,
+              ccConn.transportAddress,
+              ccConn.label,
+              ccConn.myUser?.shortName,
+            ).catch(() => {}); // best-effort
+          }
+          break;
+        }
+
+        case "UserUpdate": {
+          const { connection_id, num, user } = data.payload;
+          // Update the user field on the existing node
+          const conn = store.connections[connection_id];
+          if (conn) {
+            const existing = conn.meshNodes[num];
+            if (existing) {
+              store.upsertMeshNode(connection_id, {
+                ...existing,
+                user: mapUser(user),
+              });
+            }
+            // If it's our node, update myUser
+            if (conn.myNodeNum === num) {
+              store.setMyNodeInfo(connection_id, num, mapUser(user));
+            }
+          }
+          break;
+        }
+      }
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+}
