@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - BLE transport backend: btleplug-based Bluetooth Low Energy support for connecting to Meshtastic nodes
 - BLE device scanning command with Meshtastic service UUID filtering
 - BLE connect command with auto-reconnect (3 retries, exponential backoff 3s-15s)
+- BLE connection UI: new Bluetooth tab in Add Connection dialog with device scanning, signal strength indicators, and connection history
 
 ## [0.3.1] - 2026-03-26
 
