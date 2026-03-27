@@ -17,8 +17,10 @@ pub fn run() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::discovery::list_serial_ports,
+            commands::discovery::scan_ble_devices,
             commands::lifecycle::connect_serial,
             commands::lifecycle::connect_tcp,
+            commands::lifecycle::connect_ble,
             commands::lifecycle::disconnect_node,
             commands::messaging::send_text_message,
             commands::config::set_lora_config,

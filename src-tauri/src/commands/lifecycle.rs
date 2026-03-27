@@ -87,6 +87,42 @@ pub async fn connect_tcp(
 }
 
 #[tauri::command]
+pub async fn connect_ble(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    address: String,
+    label: String,
+) -> Result<String, MeshError> {
+    let conn_id = Uuid::new_v4().to_string();
+    let (cmd_tx, cmd_rx) = mpsc::channel::<ConnectionCommand>(32);
+    let manager = state.manager.clone();
+
+    let handle = tauri::async_runtime::spawn(run_connection(
+        app,
+        conn_id.clone(),
+        TransportKind::Ble {
+            address: address.clone(),
+        },
+        cmd_rx,
+        manager.clone(),
+    ));
+
+    let conn_handle = ConnectionHandle {
+        id: conn_id.clone(),
+        label,
+        transport: "ble".into(),
+        transport_address: address,
+        command_tx: cmd_tx,
+        task_handle: handle,
+    };
+
+    let mut mgr = manager.write().await;
+    mgr.insert(conn_handle)?;
+
+    Ok(conn_id)
+}
+
+#[tauri::command]
 pub async fn disconnect_node(
     state: State<'_, AppState>,
     connection_id: String,

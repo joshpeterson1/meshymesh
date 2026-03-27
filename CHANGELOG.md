@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- BLE transport backend: btleplug-based Bluetooth Low Energy support for connecting to Meshtastic nodes
+- BLE device scanning command with Meshtastic service UUID filtering
+- BLE connect command with auto-reconnect (3 retries, exponential backoff 3s-15s)
+
 ## [0.3.1] - 2026-03-26
 
 ### Added

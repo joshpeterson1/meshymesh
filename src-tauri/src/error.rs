@@ -24,6 +24,9 @@ pub enum MeshError {
     #[error("Serial port error: {0}")]
     SerialPort(String),
 
+    #[error("BLE error: {0}")]
+    Ble(String),
+
     #[error("Validation error: {0}")]
     Validation(String),
 }
