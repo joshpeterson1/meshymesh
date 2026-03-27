@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- Interactive mesh map: Leaflet-based map view with OpenStreetMap tiles showing node positions as color-coded markers
+- Map node popups: click a node marker to see name, hardware, SNR, battery, last heard, and hop count
+- Map hop lines: dashed lines between local node and direct peers with GPS positions
+- Map controls: fit-to-bounds button and fullscreen toggle
+- Unified combined map: merged node view across all connections with deduplication
+
 ## [0.3.1] - 2026-03-26
 
 ### Added
