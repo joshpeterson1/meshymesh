@@ -48,3 +48,17 @@
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }
+
+@layer base {
+  .leaflet-container {
+    background: #18181b;
+  }
+  .leaflet-popup-content-wrapper {
+    background: #27272a;
+    color: #f4f4f5;
+    border-radius: 0.5rem;
+  }
+  .leaflet-popup-tip {
+    background: #27272a;
+  }
+}
