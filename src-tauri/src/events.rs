@@ -48,10 +48,15 @@ pub enum NodeEvent {
         hop_start: u32,
         hop_limit: u32,
         via_mqtt: bool,
+        /// Non-zero = this is an emoji reaction, not a text message
+        emoji: u32,
+        /// Packet ID of the message being reacted to or replied to
+        reply_id: u32,
     },
     DeviceMetricsUpdate {
         connection_id: String,
         node_num: u32,
+        rx_time: u32,
         battery_level: Option<u32>,
         voltage: Option<f32>,
         channel_utilization: Option<f32>,
@@ -100,6 +105,7 @@ pub struct UserInfo {
     pub hw_model: String,
     pub role: String,
     pub has_public_key: bool,
+    pub public_key: String,
 }
 
 #[derive(Serialize, Clone, Debug)]

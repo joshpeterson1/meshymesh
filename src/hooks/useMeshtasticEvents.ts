@@ -27,6 +27,7 @@ interface RustUserInfo {
   hw_model: string;
   role: string;
   has_public_key: boolean;
+  public_key: string;
 }
 
 interface RustPositionInfo {
@@ -101,6 +102,8 @@ type NodeEvent =
         hop_start: number;
         hop_limit: number;
         via_mqtt: boolean;
+        emoji: number;
+        reply_id: number;
       };
     }
   | {
@@ -108,8 +111,12 @@ type NodeEvent =
       payload: {
         connection_id: string;
         node_num: number;
+        rx_time: number;
         battery_level: number | null;
         voltage: number | null;
+        channel_utilization: number | null;
+        air_util_tx: number | null;
+        uptime_seconds: number | null;
       };
     }
   | {
@@ -164,6 +171,7 @@ function mapUser(ru: RustUserInfo): MeshUser {
     hwModel: ru.hw_model,
     role: ru.role,
     hasPublicKey: ru.has_public_key,
+    publicKey: ru.public_key || undefined,
   };
 }
 
@@ -224,18 +232,28 @@ export function useMeshtasticEvents() {
 
         case "NodeDiscovered": {
           const p = data.payload;
+          // Preserve existing node data when the event has null/zero fields.
+          // NodeDiscovered fires from both handshake NodeInfo (stale snapshots)
+          // and live PositionApp packets. Use the newer data when both exist.
+          const existingNode = store.connections[p.connection_id]?.meshNodes[p.num];
+          const eventLastHeard = p.last_heard || 0;
+          const existingLastHeard = existingNode?.lastHeard || 0;
+          const eventIsNewer = eventLastHeard >= existingLastHeard;
+
+          const defaultUser = {
+            id: `!${p.num.toString(16)}`,
+            longName: `Node ${p.num.toString(16)}`,
+            shortName: p.num.toString(16).slice(-4).toUpperCase(),
+            hwModel: "",
+            role: "CLIENT",
+            hasPublicKey: false,
+          };
           const node: MeshNode = {
             num: p.num,
             user: p.user
               ? mapUser(p.user)
-              : {
-                  id: `!${p.num.toString(16)}`,
-                  longName: `Node ${p.num.toString(16)}`,
-                  shortName: p.num.toString(16).slice(-4).toUpperCase(),
-                  hwModel: "",
-                  role: "CLIENT",
-                  hasPublicKey: false,
-                },
+              : existingNode?.user ?? defaultUser,
+            // Position and signal fields: only overwrite if this event is newer
             position: p.position
               ? {
                   latitude: p.position.latitude,
@@ -243,14 +261,22 @@ export function useMeshtasticEvents() {
                   altitude: p.position.altitude ?? 0,
                   time: p.position.time,
                 }
-              : undefined,
-            snr: p.snr,
-            lastHeard: p.last_heard,
-            hopsAway: p.hops_away ?? 0,
-            batteryLevel: p.device_metrics?.battery_level ?? undefined,
-            voltage: p.device_metrics?.voltage ?? undefined,
-            viaMqtt: p.via_mqtt,
-            isFavorite: p.is_favorite,
+              : existingNode?.position,
+            snr: eventIsNewer ? p.snr : (existingNode?.snr ?? p.snr),
+            lastHeard: Math.max(eventLastHeard, existingLastHeard),
+            hopsAway: eventIsNewer
+              ? (p.hops_away ?? existingNode?.hopsAway ?? 0)
+              : (existingNode?.hopsAway ?? p.hops_away ?? 0),
+            // Device metrics: only use as initial values, live DeviceMetricsUpdate takes priority
+            batteryLevel: existingNode?.batteryLevel ?? p.device_metrics?.battery_level ?? undefined,
+            voltage: existingNode?.voltage ?? p.device_metrics?.voltage ?? undefined,
+            viaMqtt: eventIsNewer ? p.via_mqtt : (existingNode?.viaMqtt ?? p.via_mqtt),
+            isFavorite: p.is_favorite || existingNode?.isFavorite || false,
+            firstHeard: existingNode?.firstHeard ?? Math.floor(Date.now() / 1000),
+            uptimeSeconds: existingNode?.uptimeSeconds ?? p.device_metrics?.uptime_seconds ?? undefined,
+            channelUtilization: existingNode?.channelUtilization ?? p.device_metrics?.channel_utilization ?? undefined,
+            airUtilTx: existingNode?.airUtilTx ?? p.device_metrics?.air_util_tx ?? undefined,
+            metricsLog: existingNode?.metricsLog,
           };
           store.upsertMeshNode(p.connection_id, node);
 
@@ -298,6 +324,27 @@ export function useMeshtasticEvents() {
 
         case "MessageReceived": {
           const p = data.payload;
+
+          // Any message from a node is "hearing" from it — update lastHeard
+          if (p.rx_time > 0) {
+            store.updateNodeLastHeard(p.connection_id, p.from, p.rx_time);
+          }
+
+          // Detect emoji reactions (emoji != 0 and reply_id != 0)
+          if (p.emoji !== 0 && p.reply_id !== 0) {
+            const targetMsgId = p.reply_id.toString();
+            store.addReaction(p.connection_id, targetMsgId, p.text, p.from);
+
+            // Subtle toast for reactions (not from our own node)
+            const reactConn = store.connections[p.connection_id];
+            if (reactConn && p.from !== reactConn.myNodeNum) {
+              const senderNode = reactConn.meshNodes[p.from];
+              const senderName = senderNode?.user.shortName ?? `!${p.from.toString(16)}`;
+              toast(`${p.text} from ${senderName}`, { duration: 3000 });
+            }
+            break;
+          }
+
           const msg: MeshMessage = {
             id: p.id.toString(),
             from: p.from,
@@ -310,6 +357,7 @@ export function useMeshtasticEvents() {
             hopStart: p.hop_start,
             hopLimit: p.hop_limit,
             ackStatus: "none",
+            replyId: p.reply_id !== 0 ? p.reply_id.toString() : undefined,
           };
           store.addMessage(p.connection_id, msg);
 
@@ -333,10 +381,22 @@ export function useMeshtasticEvents() {
         }
 
         case "DeviceMetricsUpdate": {
-          const { connection_id, battery_level, voltage } = data.payload;
+          const { connection_id, node_num, rx_time, battery_level, voltage, channel_utilization, air_util_tx, uptime_seconds } = data.payload;
           if (battery_level != null && voltage != null) {
             store.updateBattery(connection_id, battery_level, voltage);
           }
+          // Telemetry is "hearing" from the node — update lastHeard
+          if (rx_time > 0) {
+            store.updateNodeLastHeard(connection_id, node_num, rx_time);
+          }
+          store.addNodeMetrics(connection_id, node_num, {
+            timestamp: Math.floor(Date.now() / 1000),
+            batteryLevel: battery_level ?? undefined,
+            voltage: voltage ?? undefined,
+            channelUtilization: channel_utilization ?? undefined,
+            airUtilTx: air_util_tx ?? undefined,
+            uptimeSeconds: uptime_seconds ?? undefined,
+          });
           break;
         }
 

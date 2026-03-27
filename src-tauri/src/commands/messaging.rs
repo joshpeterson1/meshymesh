@@ -12,6 +12,8 @@ pub async fn send_text_message(
     destination: u32,
     channel: u32,
     want_ack: bool,
+    reply_id: Option<u32>,
+    emoji: Option<u32>,
 ) -> Result<(), MeshError> {
     let mgr = state.manager.read().await;
     let tx = mgr.get_command_sender(&connection_id)?;
@@ -21,6 +23,8 @@ pub async fn send_text_message(
         destination,
         channel,
         want_ack,
+        reply_id: reply_id.unwrap_or(0),
+        emoji: emoji.unwrap_or(0),
     })
     .await
     .map_err(|_| MeshError::ChannelClosed)?;

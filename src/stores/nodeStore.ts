@@ -8,6 +8,7 @@ import type {
   ConnectionStatus,
   TransportType,
   LoraConfig,
+  DeviceMetricsEntry,
 } from "./types";
 interface NodeStoreState {
   connections: Record<string, NodeConnection>;
@@ -41,6 +42,9 @@ interface NodeStoreState {
   setDeviceConfig: (connId: string, configType: string, config: Record<string, unknown>) => void;
   setLoraConfig: (connId: string, config: LoraConfig) => void;
   updateBattery: (connId: string, level: number, voltage: number) => void;
+  addNodeMetrics: (connId: string, nodeNum: number, entry: DeviceMetricsEntry) => void;
+  updateNodeLastHeard: (connId: string, nodeNum: number, lastHeard: number) => void;
+  addReaction: (connId: string, targetMsgId: string, emoji: string, fromNode: number) => void;
 }
 
 export const useNodeStore = create<NodeStoreState>((set) => ({
@@ -263,6 +267,77 @@ export const useNodeStore = create<NodeStoreState>((set) => ({
         connections: {
           ...state.connections,
           [connId]: { ...conn, batteryLevel: level, voltage },
+        },
+      };
+    }),
+
+  addNodeMetrics: (connId, nodeNum, entry) =>
+    set((state) => {
+      const conn = state.connections[connId];
+      if (!conn) return state;
+      const node = conn.meshNodes[nodeNum];
+      if (!node) return state;
+      const log = node.metricsLog ?? [];
+      // Cap at 100 entries to prevent unbounded growth
+      const updated = [...log, entry].slice(-100);
+      return {
+        connections: {
+          ...state.connections,
+          [connId]: {
+            ...conn,
+            meshNodes: {
+              ...conn.meshNodes,
+              [nodeNum]: {
+                ...node,
+                batteryLevel: entry.batteryLevel ?? node.batteryLevel,
+                voltage: entry.voltage ?? node.voltage,
+                uptimeSeconds: entry.uptimeSeconds ?? node.uptimeSeconds,
+                channelUtilization: entry.channelUtilization ?? node.channelUtilization,
+                airUtilTx: entry.airUtilTx ?? node.airUtilTx,
+                metricsLog: updated,
+              },
+            },
+          },
+        },
+      };
+    }),
+
+  updateNodeLastHeard: (connId, nodeNum, lastHeard) =>
+    set((state) => {
+      const conn = state.connections[connId];
+      if (!conn) return state;
+      const node = conn.meshNodes[nodeNum];
+      if (!node || node.lastHeard >= lastHeard) return state;
+      return {
+        connections: {
+          ...state.connections,
+          [connId]: {
+            ...conn,
+            meshNodes: {
+              ...conn.meshNodes,
+              [nodeNum]: { ...node, lastHeard },
+            },
+          },
+        },
+      };
+    }),
+
+  addReaction: (connId, targetMsgId, emoji, fromNode) =>
+    set((state) => {
+      const conn = state.connections[connId];
+      if (!conn) return state;
+      const msgIdx = conn.messages.findIndex((m) => m.id === targetMsgId);
+      if (msgIdx === -1) return state;
+      const msg = conn.messages[msgIdx];
+      const existing = msg.reactions ?? [];
+      // Deduplicate by (emoji + from) pair
+      if (existing.some((r) => r.emoji === emoji && r.from === fromNode)) return state;
+      const updated = [...conn.messages];
+      updated[msgIdx] = { ...msg, reactions: [...existing, { emoji, from: fromNode }] };
+      return {
+        connections: {
+          ...state.connections,
+          [connId]: { ...conn, messages: updated },
         },
       };
     }),

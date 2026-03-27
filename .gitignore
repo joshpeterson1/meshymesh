@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+log.txt
 dist-ssr/
 
 # Tauri / Rust

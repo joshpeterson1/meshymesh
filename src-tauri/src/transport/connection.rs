@@ -221,11 +221,11 @@ async fn run_serial_connection(
 
             cmd = command_rx.recv() => {
                 match cmd {
-                    Some(ConnectionCommand::SendText { local_id, text, destination, channel, want_ack }) => {
+                    Some(ConnectionCommand::SendText { local_id, text, destination, channel, want_ack, reply_id, emoji }) => {
                         log::info!("[{}] Sending text: '{}' to {} on ch {}", conn_id, text, destination, channel);
 
                         let packet = build_text_packet(
-                            0, &text, destination, channel, want_ack,
+                            0, &text, destination, channel, want_ack, reply_id, emoji,
                         );
                         let packet_id = packet.id;
                         log::info!("[{}] MeshPacket: from={} to={} id={} channel={} want_ack={} hop_limit={} hop_start={}",
@@ -344,29 +344,50 @@ async fn run_tcp_connection(
             }
             cmd = command_rx.recv() => {
                 match cmd {
-                    Some(ConnectionCommand::SendText { local_id, text, destination, channel, want_ack }) => {
-                        let dest = if destination == 0xFFFFFFFF {
-                            PacketDestination::Broadcast
+                    Some(ConnectionCommand::SendText { local_id, text, destination, channel, want_ack, reply_id, emoji }) => {
+                        if reply_id == 0 && emoji == 0 {
+                            // Regular text message — use crate helper for echo routing
+                            let dest = if destination == 0xFFFFFFFF {
+                                PacketDestination::Broadcast
+                            } else {
+                                PacketDestination::Node(destination.into())
+                            };
+                            let mesh_channel = MeshChannel::new(channel).unwrap_or_default();
+                            match stream_api.send_text(&mut router, text.clone(), dest, want_ack, mesh_channel).await {
+                                Ok(()) => {
+                                    if let Ok(echoed_packet) = echo_rx.try_recv() {
+                                        let packet_id = echoed_packet.id;
+                                        log::info!("[{}] TCP text sent, packet_id={}", conn_id, packet_id);
+                                        emit(&NodeEvent::MessageSent {
+                                            connection_id: conn_id.to_string(),
+                                            local_id,
+                                            packet_id,
+                                        });
+                                    } else {
+                                        log::warn!("[{}] TCP text sent but no echo received for local_id={}", conn_id, local_id);
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("[{}] TCP send text failed: {}", conn_id, e);
+                                }
+                            }
                         } else {
-                            PacketDestination::Node(destination.into())
-                        };
-                        let mesh_channel = MeshChannel::new(channel).unwrap_or_default();
-                        match stream_api.send_text(&mut router, text, dest, want_ack, mesh_channel).await {
-                            Ok(()) => {
-                                if let Ok(echoed_packet) = echo_rx.try_recv() {
-                                    let packet_id = echoed_packet.id;
-                                    log::info!("[{}] TCP text sent, packet_id={}", conn_id, packet_id);
+                            // Reaction or reply — build packet manually (crate helper doesn't support emoji/reply_id)
+                            let packet = build_text_packet(0, &text, destination, channel, want_ack, reply_id, emoji);
+                            let packet_id = packet.id;
+                            let to_radio = ToRadio {
+                                payload_variant: Some(protobufs::to_radio::PayloadVariant::Packet(packet)),
+                            };
+                            match stream_api.send_to_radio_packet(to_radio.payload_variant).await {
+                                Ok(()) => {
+                                    log::info!("[{}] TCP reaction sent, packet_id={}", conn_id, packet_id);
                                     emit(&NodeEvent::MessageSent {
                                         connection_id: conn_id.to_string(),
                                         local_id,
                                         packet_id,
                                     });
-                                } else {
-                                    log::warn!("[{}] TCP text sent but no echo received for local_id={}", conn_id, local_id);
                                 }
-                            }
-                            Err(e) => {
-                                log::error!("[{}] TCP send text failed: {}", conn_id, e);
+                                Err(e) => log::error!("[{}] TCP reaction send failed: {}", conn_id, e),
                             }
                         }
                     }
@@ -402,20 +423,22 @@ async fn run_tcp_connection(
     }
 }
 
-/// Build a MeshPacket for sending a text message
+/// Build a MeshPacket for sending a text message or emoji reaction
 fn build_text_packet(
     from: u32,
     text: &str,
     destination: u32,
     channel: u32,
     want_ack: bool,
+    reply_id: u32,
+    emoji: u32,
 ) -> protobufs::MeshPacket {
     let data = protobufs::Data {
         portnum: PortNum::TextMessageApp as i32,
         payload: text.as_bytes().to_vec(),
-        // want_response requests a *reply message* from the recipient, NOT an ACK.
-        // ACK behavior is controlled by MeshPacket.want_ack (set below).
         want_response: false,
+        reply_id,
+        emoji,
         ..Default::default()
     };
 
@@ -589,7 +612,11 @@ fn process_mesh_packet(app: &AppHandle, conn_id: &str, packet: &protobufs::MeshP
     match port {
         PortNum::TextMessageApp => {
             let text = String::from_utf8_lossy(&data.payload).to_string();
-            log::info!("[{}] Message from {} to {}: '{}'", conn_id, packet.from, packet.to, text);
+            if data.emoji != 0 {
+                log::info!("[{}] Reaction from {} to msg {}: '{}'", conn_id, packet.from, data.reply_id, text);
+            } else {
+                log::info!("[{}] Message from {} to {}: '{}'", conn_id, packet.from, packet.to, text);
+            }
             emit(&NodeEvent::MessageReceived {
                 connection_id: conn_id.to_string(),
                 id: packet.id,
@@ -603,6 +630,8 @@ fn process_mesh_packet(app: &AppHandle, conn_id: &str, packet: &protobufs::MeshP
                 hop_start: packet.hop_start,
                 hop_limit: packet.hop_limit,
                 via_mqtt: packet.via_mqtt,
+                emoji: data.emoji,
+                reply_id: data.reply_id,
             });
         }
 
@@ -639,6 +668,7 @@ fn process_mesh_packet(app: &AppHandle, conn_id: &str, packet: &protobufs::MeshP
                     emit(&NodeEvent::DeviceMetricsUpdate {
                         connection_id: conn_id.to_string(),
                         node_num: packet.from,
+                        rx_time: packet.rx_time,
                         battery_level: dm.battery_level,
                         voltage: dm.voltage,
                         channel_utilization: dm.channel_utilization,
@@ -685,6 +715,12 @@ fn user_info_from_proto(user: &protobufs::User) -> UserInfo {
             }
         });
 
+    let public_key = if user.public_key.is_empty() {
+        String::new()
+    } else {
+        user.public_key.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+    };
+
     UserInfo {
         id: user.id.clone(),
         long_name: user.long_name.clone(),
@@ -692,6 +728,7 @@ fn user_info_from_proto(user: &protobufs::User) -> UserInfo {
         hw_model,
         role,
         has_public_key: !user.public_key.is_empty(),
+        public_key,
     }
 }
 

@@ -14,6 +14,7 @@ export interface MeshUser {
   hwModel: string;
   role: string;
   hasPublicKey: boolean;
+  publicKey?: string;
 }
 
 export interface MeshPosition {
@@ -21,6 +22,15 @@ export interface MeshPosition {
   longitude: number;
   altitude: number;
   time: number;
+}
+
+export interface DeviceMetricsEntry {
+  timestamp: number;
+  batteryLevel?: number;
+  voltage?: number;
+  channelUtilization?: number;
+  airUtilTx?: number;
+  uptimeSeconds?: number;
 }
 
 export interface MeshNode {
@@ -34,6 +44,16 @@ export interface MeshNode {
   voltage?: number;
   viaMqtt: boolean;
   isFavorite: boolean;
+  firstHeard?: number;
+  uptimeSeconds?: number;
+  channelUtilization?: number;
+  airUtilTx?: number;
+  metricsLog?: DeviceMetricsEntry[];
+}
+
+export interface MessageReaction {
+  emoji: string;
+  from: number;
 }
 
 export interface MeshMessage {
@@ -48,6 +68,8 @@ export interface MeshMessage {
   hopStart?: number;
   hopLimit?: number;
   ackStatus: "pending" | "acked" | "implicit" | "max_retransmit" | "failed" | "none";
+  replyId?: string;
+  reactions?: MessageReaction[];
 }
 
 export interface MeshChannel {

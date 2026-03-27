@@ -110,6 +110,8 @@ export async function sendTextMessage(
   destination: number,
   channel: number,
   wantAck: boolean,
+  replyId?: number,
+  emoji?: number,
 ): Promise<void> {
   return invoke("send_text_message", {
     connectionId,
@@ -118,5 +120,7 @@ export async function sendTextMessage(
     destination,
     channel,
     wantAck,
+    replyId: replyId ?? null,
+    emoji: emoji ?? null,
   });
 }

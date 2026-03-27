@@ -12,6 +12,8 @@ pub enum ConnectionCommand {
         destination: u32,
         channel: u32,
         want_ack: bool,
+        reply_id: u32,
+        emoji: u32,
     },
     /// Send raw admin message bytes (pre-encoded AdminMessage protobuf)
     SendAdmin {

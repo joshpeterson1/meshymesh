@@ -16,6 +16,8 @@ import {
   Unlock,
   ChevronDown,
   ChevronRight,
+  HelpCircle,
+  AlertTriangle,
 } from "lucide-react";
 import { useNodeStore } from "@/stores/nodeStore";
 import { useUIStore } from "@/stores/uiStore";
@@ -33,12 +35,29 @@ function formatRole(role: string): string {
 }
 
 function formatLastHeard(timestamp: number): string {
+  if (timestamp === 0) return "N/A";
   const now = Math.floor(Date.now() / 1000);
   const diff = now - timestamp;
+  if (diff < 0) return "now";
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function formatUptime(seconds?: number): string {
+  if (seconds == null || seconds === 0) return "N/A";
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function formatTimestamp(ts: number): string {
+  if (ts === 0) return "N/A";
+  return new Date(ts * 1000).toLocaleString();
 }
 
 function BattIcon({ level }: { level?: number }) {
@@ -93,6 +112,27 @@ function sortNodes(nodes: MeshNode[], field: SortField): MeshNode[] {
   });
 }
 
+type FilterMode = "off" | "hide" | "only";
+
+const FILTER_CYCLE: FilterMode[] = ["off", "hide", "only"];
+
+/** Unknown = no longName AND no shortName (or both are default hex placeholders) */
+function isUnknownNode(node: MeshNode): boolean {
+  const name = node.user.longName.trim();
+  const short = node.user.shortName.trim();
+  if (!name && !short) return true;
+  // Match default placeholder pattern: "Node {hex}" with empty/hex shortName
+  const hexPattern = /^Node [0-9a-f]+$/i;
+  const shortHexPattern = /^[0-9A-F]{1,4}$/;
+  return hexPattern.test(name) && (shortHexPattern.test(short) || !short);
+}
+
+/** Incomplete = missing any of: valid longName, valid shortName, or valid hwModel */
+function isIncompleteNode(node: MeshNode): boolean {
+  if (isUnknownNode(node)) return true;
+  return !node.user.hwModel || node.user.hwModel === "";
+}
+
 export function NodesView() {
   const selectedId = useUIStore((s) => s.selectedConnectionId);
   const connections = useNodeStore((s) => s.connections);
@@ -100,6 +140,9 @@ export function NodesView() {
   const [sortField, setSortField] = useState<SortField>("lastHeard");
   const [search, setSearch] = useState("");
   const [collapsedSlots, setCollapsedSlots] = useState<Set<number>>(new Set());
+  const [unknownFilter, setUnknownFilter] = useState<FilterMode>("off");
+  const [incompleteFilter, setIncompleteFilter] = useState<FilterMode>("off");
+  const [expandedNode, setExpandedNode] = useState<number | null>(null);
 
   // Collect local node numbers to identify "our" nodes
   const localNodeNums = new Set<number>();
@@ -149,6 +192,19 @@ export function NodesView() {
       n.user.hwModel.toLowerCase().includes(query) ||
       n.num.toString(16).includes(query)
     );
+  }
+
+  // Apply unknown/incomplete filters
+  if (unknownFilter === "hide") {
+    nodes = nodes.filter((n) => !isUnknownNode(n));
+  } else if (unknownFilter === "only") {
+    nodes = nodes.filter((n) => isUnknownNode(n));
+  }
+
+  if (incompleteFilter === "hide") {
+    nodes = nodes.filter((n) => !isIncompleteNode(n));
+  } else if (incompleteFilter === "only") {
+    nodes = nodes.filter((n) => isIncompleteNode(n));
   }
 
   // Sort within tiers: local node first, then favorites, then the rest
@@ -224,6 +280,49 @@ export function NodesView() {
             <ArrowUpDown size={14} />
             <span className="text-[10px]">{sortLabels[sortField]}</span>
           </button>
+
+          {/* Node filters */}
+          <div className="h-4 w-px bg-zinc-700/50" />
+          <button
+            onClick={() => {
+              const idx = FILTER_CYCLE.indexOf(unknownFilter);
+              setUnknownFilter(FILTER_CYCLE[(idx + 1) % FILTER_CYCLE.length]);
+            }}
+            className={cn(
+              "flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-colors shrink-0",
+              unknownFilter === "off"
+                ? "text-zinc-600 hover:text-zinc-400"
+                : unknownFilter === "hide"
+                  ? "text-yellow-400 bg-yellow-400/10"
+                  : "text-blue-400 bg-blue-400/10",
+            )}
+            title={`Unknown nodes: ${unknownFilter === "off" ? "showing all" : unknownFilter === "hide" ? "hidden" : "only"}`}
+          >
+            <HelpCircle size={11} />
+            {unknownFilter !== "off" && (
+              <span>{unknownFilter === "hide" ? "Hide" : "Only"}</span>
+            )}
+          </button>
+          <button
+            onClick={() => {
+              const idx = FILTER_CYCLE.indexOf(incompleteFilter);
+              setIncompleteFilter(FILTER_CYCLE[(idx + 1) % FILTER_CYCLE.length]);
+            }}
+            className={cn(
+              "flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-colors shrink-0",
+              incompleteFilter === "off"
+                ? "text-zinc-600 hover:text-zinc-400"
+                : incompleteFilter === "hide"
+                  ? "text-yellow-400 bg-yellow-400/10"
+                  : "text-blue-400 bg-blue-400/10",
+            )}
+            title={`Incomplete nodes: ${incompleteFilter === "off" ? "showing all" : incompleteFilter === "hide" ? "hidden" : "only"}`}
+          >
+            <AlertTriangle size={11} />
+            {incompleteFilter !== "off" && (
+              <span>{incompleteFilter === "hide" ? "Hide" : "Only"}</span>
+            )}
+          </button>
         </div>
       </div>
 
@@ -279,13 +378,16 @@ export function NodesView() {
                   )}
                   {!isCollapsed && group.nodes.map((node) => {
                     const isLocal = localNodeNums.has(node.num);
+                    const isExpanded = expandedNode === node.num;
                     return (
+                      <React.Fragment key={node.num}>
                       <tr
-                        key={node.num}
                         className={cn(
                           "border-t border-zinc-800/50 hover:bg-zinc-800/30 transition-colors cursor-pointer",
                           isLocal && "bg-mesh-green/5",
+                          isExpanded && "bg-zinc-800/40",
                         )}
+                        onClick={() => setExpandedNode(isExpanded ? null : node.num)}
                       >
                         <td className="px-4 py-2.5">
                           <div className="flex items-center gap-2.5">
@@ -383,6 +485,109 @@ export function NodesView() {
                           </td>
                         )}
                       </tr>
+                      {isExpanded && (
+                        <tr className="bg-zinc-900/60 border-t border-zinc-800/30">
+                          <td colSpan={isUnified ? 10 : 9} className="px-6 py-4">
+                            <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-xs mb-4 max-w-xl">
+                              <div>
+                                <span className="text-zinc-500">Node #</span>
+                                <span className="ml-2 text-zinc-300 font-mono">
+                                  {node.num} (0x{node.num.toString(16).toUpperCase()})
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-zinc-500">User ID</span>
+                                <span className="ml-2 text-zinc-300 font-mono">{node.user.id}</span>
+                              </div>
+                              <div>
+                                <span className="text-zinc-500">Public Key</span>
+                                <span className="ml-2 text-zinc-300 font-mono text-[10px]">
+                                  {node.user.publicKey || "None"}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-zinc-500">First Heard</span>
+                                <span className="ml-2 text-zinc-300">{formatTimestamp(node.firstHeard ?? 0)}</span>
+                              </div>
+                            </div>
+
+                            {/* Telemetry section with freshness indicator */}
+                            {(() => {
+                              const lastMetrics = node.metricsLog?.length ? node.metricsLog[node.metricsLog.length - 1] : null;
+                              const hasTelem = lastMetrics != null;
+                              const valueClass = hasTelem ? "text-zinc-300" : "text-zinc-500 italic";
+                              return (
+                                <div className="mb-4">
+                                  <div className="text-[10px] text-zinc-500 mb-2">
+                                    {hasTelem ? (
+                                      <>Telemetry updated <span className="text-zinc-400">{formatLastHeard(lastMetrics.timestamp)}</span></>
+                                    ) : (
+                                      <span className="italic">Telemetry from handshake (may be stale)</span>
+                                    )}
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-xs max-w-xl">
+                                    <div>
+                                      <span className="text-zinc-500">Uptime</span>
+                                      <span className={`ml-2 ${valueClass}`}>{formatUptime(node.uptimeSeconds)}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-zinc-500">Channel Util</span>
+                                      <span className={`ml-2 ${valueClass}`}>
+                                        {node.channelUtilization != null ? `${node.channelUtilization.toFixed(1)}%` : "N/A"}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="text-zinc-500">Air Util TX</span>
+                                      <span className={`ml-2 ${valueClass}`}>
+                                        {node.airUtilTx != null ? `${node.airUtilTx.toFixed(1)}%` : "N/A"}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Device Metrics Log */}
+                            {node.metricsLog && node.metricsLog.length > 0 && (
+                              <div>
+                                <h4 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-2">
+                                  Device Metrics Log ({node.metricsLog.length})
+                                </h4>
+                                <div className="max-h-40 overflow-y-auto rounded border border-zinc-800">
+                                  <table className="w-full text-[10px]">
+                                    <thead className="sticky top-0 bg-zinc-900">
+                                      <tr className="text-zinc-500">
+                                        <th className="text-left px-2 py-1">Time</th>
+                                        <th className="text-right px-2 py-1">Battery</th>
+                                        <th className="text-right px-2 py-1">Voltage</th>
+                                        <th className="text-right px-2 py-1">Ch Util</th>
+                                        <th className="text-right px-2 py-1">Air TX</th>
+                                        <th className="text-right px-2 py-1">Uptime</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {[...node.metricsLog].reverse().map((entry, i) => (
+                                        <tr key={i} className="border-t border-zinc-800/30 text-zinc-400">
+                                          <td className="px-2 py-1 font-mono">{new Date(entry.timestamp * 1000).toLocaleTimeString()}</td>
+                                          <td className="px-2 py-1 text-right">{entry.batteryLevel != null ? `${entry.batteryLevel}%` : "—"}</td>
+                                          <td className="px-2 py-1 text-right">{entry.voltage != null ? `${entry.voltage.toFixed(2)}V` : "—"}</td>
+                                          <td className="px-2 py-1 text-right">{entry.channelUtilization != null ? `${entry.channelUtilization.toFixed(1)}%` : "—"}</td>
+                                          <td className="px-2 py-1 text-right">{entry.airUtilTx != null ? `${entry.airUtilTx.toFixed(1)}%` : "—"}</td>
+                                          <td className="px-2 py-1 text-right">{entry.uptimeSeconds != null ? formatUptime(entry.uptimeSeconds) : "—"}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+                            {(!node.metricsLog || node.metricsLog.length === 0) && (
+                              <p className="text-[10px] text-zinc-600 italic">No device metrics received yet</p>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     );
                   })}
                 </React.Fragment>

@@ -5,9 +5,26 @@ import { useNodeStore } from "@/stores/nodeStore";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
 import { sendTextMessage } from "@/lib/tauri";
-import type { MeshMessage, MeshChannel } from "@/stores/types";
+import type { MeshMessage, MeshChannel, MessageReaction } from "@/stores/types";
 
 const BROADCAST = 0xffffffff;
+
+function groupReactions(
+  reactions: MessageReaction[],
+  getNodeName: (num: number) => string,
+): { emoji: string; count: number; senders: string }[] {
+  const map = new Map<string, number[]>();
+  for (const r of reactions) {
+    const list = map.get(r.emoji) ?? [];
+    list.push(r.from);
+    map.set(r.emoji, list);
+  }
+  return Array.from(map.entries()).map(([emoji, froms]) => ({
+    emoji,
+    count: froms.length,
+    senders: froms.map(getNodeName).join(", "),
+  }));
+}
 
 // "channel:0" for channel index 0, "dm:12345" for DM with node 12345
 type ConversationTarget =
@@ -326,6 +343,22 @@ export function ConversationsView() {
                       </p>
                       <AckIcon status={msg.ackStatus} />
                     </div>
+                    {msg.reactions && msg.reactions.length > 0 && (
+                      <div className="flex gap-1 mt-1 flex-wrap">
+                        {groupReactions(msg.reactions, getNodeName).map(({ emoji, count, senders }) => (
+                          <span
+                            key={emoji}
+                            title={senders}
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-zinc-800 border border-zinc-700/50 text-xs cursor-default"
+                          >
+                            {emoji}
+                            {count > 1 && (
+                              <span className="text-[10px] text-zinc-400">{count}</span>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {msg.rxSnr != null && (
                       <div className="text-[10px] text-zinc-600 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                         SNR: {msg.rxSnr} dB &middot; RSSI: {msg.rxRssi} dBm

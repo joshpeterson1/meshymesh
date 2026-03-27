@@ -28,8 +28,10 @@ function BatteryIcon({ level }: { level?: number }) {
 }
 
 function formatLastHeard(timestamp: number): string {
+  if (timestamp === 0) return "N/A";
   const now = Math.floor(Date.now() / 1000);
   const diff = now - timestamp;
+  if (diff < 0) return "now";
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
