@@ -1,6 +1,6 @@
 [package]
 name = "meshymesh"
-version = "0.3.0"
+version = "0.3.1"
 description = "Multi-node Meshtastic client for Windows"
 authors = ["you"]
 edition = "2021"

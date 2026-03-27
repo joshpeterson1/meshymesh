@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Send, Hash, User, Check, CheckCheck, Clock, AlertCircle, RotateCw, Search, X } from "lucide-react";
 import { useNodeStore } from "@/stores/nodeStore";
@@ -8,6 +8,23 @@ import { sendTextMessage } from "@/lib/tauri";
 import type { MeshMessage, MeshChannel, MessageReaction } from "@/stores/types";
 
 const BROADCAST = 0xffffffff;
+
+const REACTION_EMOJIS = [
+  { char: "\u{1F44D}", label: "Thumbs Up" },
+  { char: "\u{2764}\u{FE0F}", label: "Heart" },
+  { char: "\u{1F602}", label: "Laugh" },
+  { char: "\u{1F62E}", label: "Wow" },
+  { char: "\u{1F622}", label: "Sad" },
+  { char: "\u{1F389}", label: "Party" },
+] as const;
+
+interface EmojiPickerState {
+  msgId: string;
+  msgFrom: number;
+  msgChannel: number;
+  x: number;
+  y: number;
+}
 
 function groupReactions(
   reactions: MessageReaction[],
@@ -62,12 +79,35 @@ export function ConversationsView() {
   const connections = useNodeStore((s) => s.connections);
   const connectionOrder = useNodeStore((s) => s.connectionOrder);
   const addMessage = useNodeStore((s) => s.addMessage);
+  const addReaction = useNodeStore((s) => s.addReaction);
   const [messageInput, setMessageInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [target, setTarget] = useState<ConversationTarget>({
     type: "channel",
     index: 0,
   });
+  const [emojiPicker, setEmojiPicker] = useState<EmojiPickerState | null>(null);
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
+
+  // Close emoji picker when clicking outside
+  const handleClickOutside = useCallback(
+    (e: MouseEvent) => {
+      if (
+        emojiPickerRef.current &&
+        !emojiPickerRef.current.contains(e.target as Node)
+      ) {
+        setEmojiPicker(null);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (emojiPicker) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [emojiPicker, handleClickOutside]);
 
   const isUnified = selectedId === null;
   let allMessages: (MeshMessage & { connectionLabel?: string })[] = [];
@@ -190,6 +230,67 @@ export function ConversationsView() {
       });
   }
 
+  function handleReaction(emoji: string) {
+    if (!emojiPicker || isUnified || !selectedId) return;
+
+    const conn = connections[selectedId];
+    if (!conn?.myNodeNum) return;
+
+    const { msgId, msgFrom, msgChannel } = emojiPicker;
+    setEmojiPicker(null);
+
+    const replyId = parseInt(msgId);
+    if (isNaN(replyId)) {
+      toast.error("Cannot react to this message", {
+        description: "Invalid message ID",
+      });
+      return;
+    }
+
+    const emojiCodepoint = emoji.codePointAt(0);
+    if (emojiCodepoint === undefined) return;
+
+    const now = Math.floor(Date.now() / 1000);
+    const localId = `local-${now}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Optimistically show the reaction on the target message
+    addReaction(selectedId, msgId, emoji, conn.myNodeNum);
+
+    sendTextMessage(
+      selectedId,
+      localId,
+      emoji,
+      msgFrom,
+      msgChannel,
+      true,
+      replyId,
+      emojiCodepoint,
+    )
+      .then(() => {
+        toast.success(`Reacted with ${emoji}`);
+      })
+      .catch((e) => {
+        toast.error("Failed to send reaction", { description: String(e) });
+        useNodeStore.getState().updateMessageAck(selectedId!, localId, "failed");
+      });
+  }
+
+  function handleMessageContextMenu(
+    e: React.MouseEvent,
+    msg: MeshMessage,
+  ) {
+    // Only allow reactions on other nodes' messages, with a selected connection
+    if (isUnified || !selectedId || msg.from === myNodeNum) return;
+    e.preventDefault();
+    setEmojiPicker({
+      msgId: msg.id,
+      msgFrom: msg.from,
+      msgChannel: msg.channel,
+      x: e.clientX,
+      y: e.clientY,
+    });
+  }
+
   const activeKey = targetKey(target);
 
   return (
@@ -300,7 +401,11 @@ export function ConversationsView() {
             const senderName = getNodeName(msg.from);
 
             return (
-              <div key={msg.id} className="group">
+              <div
+                key={msg.id}
+                className="group"
+                onContextMenu={(e) => handleMessageContextMenu(e, msg)}
+              >
                 <div className="flex items-start gap-3">
                   <div
                     className={cn(
@@ -406,6 +511,29 @@ export function ConversationsView() {
           </div>
         </div>
       </div>
+
+      {/* Emoji reaction picker popup */}
+      {emojiPicker && (
+        <div
+          ref={emojiPickerRef}
+          className="fixed z-50 flex items-center gap-1 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 shadow-xl"
+          style={{
+            left: emojiPicker.x,
+            top: emojiPicker.y - 44,
+          }}
+        >
+          {REACTION_EMOJIS.map(({ char, label }) => (
+            <button
+              key={label}
+              title={label}
+              onClick={() => handleReaction(char)}
+              className="w-8 h-8 flex items-center justify-center rounded hover:bg-zinc-700 transition-colors text-lg"
+            >
+              {char}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

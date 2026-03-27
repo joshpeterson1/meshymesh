@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.1] - 2026-03-26
+
+### Added
+- Emoji reaction send UI: right-click context menu on received messages shows a quick-pick row of common emoji reactions (thumbs up, heart, laugh, wow, sad, party)
+- Config import/restore: "Import Config" button reads exported JSON backups, validates structure, shows confirmation with section list, then sequentially applies each config with ACK tracking
+- README updated: added 8 new features, removed 3 resolved limitations
+
+### Fixed
+- Sent reactions now show as badges on the target message instead of appearing as standalone text messages
+- lastHeard now updated from telemetry and text message packets, not just NodeInfo/Position
+- Stale handshake data no longer overwrites live signal/telemetry values (freshness-based merge)
+- Telemetry freshness indicator in node detail panel shows when metrics were last received
+
 ## [0.3.0] - 2026-03-26
 
 ### Added

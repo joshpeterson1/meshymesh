@@ -13,13 +13,19 @@ Connect to multiple Meshtastic radios simultaneously via Serial or WiFi and mana
 - **Multi-connection management** -- connect to several nodes at once via serial (COM) or WiFi (TCP)
 - **Discord-style UI** -- node rail, sidebar navigation, and content area
 - **Real-time messaging** -- send and receive text messages with ACK tracking (direct, implicit, max retransmit)
+- **Emoji reactions** -- receive and display tapback reactions on messages; send reactions via right-click menu
+- **Message search** -- filter conversations by text content or sender name
 - **Node discovery** -- live table of all discovered mesh nodes with sort/filter (last heard, name, hops, SNR, battery)
-- **Full device configuration** -- LoRa, channels, security, power, display, Bluetooth, and position settings with diff preview before commit
+- **Node detail panel** -- click any node row to see full device info, public key, uptime, first heard, and telemetry log
+- **Unknown/incomplete node filters** -- hide or isolate nodes missing name or hardware info
+- **Full device configuration** -- LoRa, device, display, power, position, Bluetooth, channels, and security settings with diff preview before commit
 - **Channel editor** -- encryption key management (none, default, AES128, AES256), MQTT uplink/downlink, position precision
-- **Config backup/export** -- save device config and channels to JSON
+- **Config backup/restore** -- export device config and channels to JSON, import from backup
+- **Admin command tracking** -- config saves confirm device acknowledgment with timeout fallback
 - **Connection history** -- quick reconnect to previously used serial ports and WiFi addresses
+- **Auto-reconnect** -- automatic recovery on unexpected disconnect with transport-aware exponential backoff
 - **Frequency slot grouping** -- node rail groups connections by channel number with collapsible folders
-- **Device metrics** -- battery level, voltage, channel utilization, air utilization
+- **Device metrics** -- battery level, voltage, channel utilization, air utilization with per-node telemetry history
 - **Role badges** -- color-coded role indicators (Router, Repeater, Tracker, etc.)
 
 ## Current Limitations
@@ -28,9 +34,7 @@ Connect to multiple Meshtastic radios simultaneously via Serial or WiFi and mana
 - **BLE not available** -- Bluetooth is defined in the type system but has no connection UI; only Serial and WiFi work today
 - **Read-only security keys** -- public key, private key, and admin key lists are display-only (backup export is supported)
 - **Read-only advanced LoRa fields** -- bandwidth, spread factor, coding rate, frequency offset, and PA fan settings are view-only
-- **Limited config editors** -- Device, Display, Power, Position, and Bluetooth config have backend support but no UI forms yet
 - **Text messages only** -- no file transfer, waypoints, or structured telemetry payloads
-- **No message search** -- node search works, but there is no search/filter within conversations
 - **Windows only** -- currently developed and tested on Windows; macOS/Linux builds are untested
 
 ## Prerequisites
