@@ -8,11 +8,13 @@ use tokio::sync::{mpsc, RwLock};
 
 use crate::events::*;
 use crate::state::{ConnectionCommand, ConnectionManager};
+use crate::transport::ble;
 use crate::transport::serial;
 
 pub enum TransportKind {
     Serial { port: String, baud: Option<u32> },
     Tcp { address: String },
+    Ble { address: String },
 }
 
 /// Result from an inner connection loop
@@ -48,6 +50,14 @@ impl RetryConfig {
         }
     }
 
+    fn for_ble() -> Self {
+        Self {
+            max_attempts: 3,
+            initial_delay: Duration::from_secs(3),
+            max_delay: Duration::from_secs(15),
+        }
+    }
+
     fn delay_for_attempt(&self, attempt: u32) -> Duration {
         let secs = self.initial_delay.as_secs_f64() * 2.0_f64.powi(attempt as i32);
         Duration::from_secs_f64(secs.min(self.max_delay.as_secs_f64()))
@@ -68,6 +78,7 @@ pub async fn run_connection(
     let retry_config = match &transport {
         TransportKind::Serial { .. } => RetryConfig::for_serial(),
         TransportKind::Tcp { .. } => RetryConfig::for_tcp(),
+        TransportKind::Ble { .. } => RetryConfig::for_ble(),
     };
 
     let mut attempt = 0u32;
@@ -92,6 +103,15 @@ pub async fn run_connection(
             }
             TransportKind::Tcp { ref address } => {
                 run_tcp_connection(
+                    &app,
+                    &conn_id,
+                    address,
+                    &mut command_rx,
+                )
+                .await
+            }
+            TransportKind::Ble { ref address } => {
+                run_ble_connection(
                     &app,
                     &conn_id,
                     address,
@@ -274,6 +294,125 @@ async fn run_serial_connection(
         ConnectionResult::CleanDisconnect
     } else {
         ConnectionResult::UnexpectedLoss("Serial connection lost".into())
+    }
+}
+
+/// BLE connection using btleplug — structurally identical to serial since both
+/// use the open -> channel pair pattern.
+async fn run_ble_connection(
+    app: &AppHandle,
+    conn_id: &str,
+    address: &str,
+    command_rx: &mut mpsc::Receiver<ConnectionCommand>,
+) -> ConnectionResult {
+    let emit = |event: &NodeEvent| {
+        let _ = app.emit("node-event", event);
+    };
+
+    let (mut from_radio_rx, to_radio_tx) = match ble::open_ble(address).await {
+        Ok(channels) => channels,
+        Err(e) => {
+            return ConnectionResult::ConnectFailed(e);
+        }
+    };
+
+    emit(&NodeEvent::ConnectionStatus {
+        connection_id: conn_id.to_string(),
+        status: "connected".into(),
+        error: None,
+    });
+
+    // Send WantConfigId to start the config handshake
+    let config_id = rand::random::<u32>();
+    let want_config = ToRadio {
+        payload_variant: Some(protobufs::to_radio::PayloadVariant::WantConfigId(config_id)),
+    };
+    if to_radio_tx.send(want_config).await.is_err() {
+        return ConnectionResult::ConnectFailed("Failed to send config request".into());
+    }
+
+    log::info!("[{}] BLE sent WantConfigId: {}", conn_id, config_id);
+
+    let mut my_node_num: u32 = 0;
+    let mut config_complete = false;
+    let mut user_disconnect = false;
+
+    loop {
+        tokio::select! {
+            packet = from_radio_rx.recv() => {
+                match packet {
+                    Some(from_radio) => {
+                        let is_config_complete = process_from_radio(
+                            app, conn_id, from_radio, &mut my_node_num,
+                        );
+                        if is_config_complete && !config_complete {
+                            config_complete = true;
+                            emit(&NodeEvent::ConfigComplete {
+                                connection_id: conn_id.to_string(),
+                            });
+                            log::info!("[{}] BLE config complete, node_num={}", conn_id, my_node_num);
+                        }
+                    }
+                    None => {
+                        log::warn!("[{}] BLE reader closed", conn_id);
+                        return ConnectionResult::UnexpectedLoss("BLE connection lost".into());
+                    }
+                }
+            }
+
+            cmd = command_rx.recv() => {
+                match cmd {
+                    Some(ConnectionCommand::SendText { local_id, text, destination, channel, want_ack, reply_id, emoji }) => {
+                        log::info!("[{}] BLE sending text: '{}' to {} on ch {}", conn_id, text, destination, channel);
+
+                        let packet = build_text_packet(
+                            0, &text, destination, channel, want_ack, reply_id, emoji,
+                        );
+                        let packet_id = packet.id;
+                        let to_radio = ToRadio {
+                            payload_variant: Some(protobufs::to_radio::PayloadVariant::Packet(packet)),
+                        };
+                        match to_radio_tx.send(to_radio).await {
+                            Ok(()) => {
+                                log::info!("[{}] BLE text message sent, packet_id={}", conn_id, packet_id);
+                                emit(&NodeEvent::MessageSent {
+                                    connection_id: conn_id.to_string(),
+                                    local_id,
+                                    packet_id,
+                                });
+                            }
+                            Err(e) => log::error!("[{}] BLE failed to queue text message: {}", conn_id, e),
+                        }
+                    }
+                    Some(ConnectionCommand::SendAdmin { admin_bytes, packet_id }) => {
+                        let packet = build_admin_packet(my_node_num, &admin_bytes, packet_id);
+                        log::info!("[{}] BLE sending admin packet (id={}, {} bytes)", conn_id, packet_id, admin_bytes.len());
+                        let to_radio = ToRadio {
+                            payload_variant: Some(protobufs::to_radio::PayloadVariant::Packet(packet)),
+                        };
+                        if let Err(e) = to_radio_tx.send(to_radio).await {
+                            log::error!("[{}] BLE failed to queue admin message: {}", conn_id, e);
+                        }
+                    }
+                    Some(ConnectionCommand::Disconnect) => {
+                        log::info!("[{}] BLE disconnect requested", conn_id);
+                        user_disconnect = true;
+                        break;
+                    }
+                    None => {
+                        log::warn!("[{}] BLE command channel closed", conn_id);
+                        user_disconnect = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if user_disconnect {
+        ConnectionResult::CleanDisconnect
+    } else {
+        ConnectionResult::UnexpectedLoss("BLE connection lost".into())
     }
 }
 
