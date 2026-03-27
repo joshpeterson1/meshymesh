@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- BLE connection UI: new Bluetooth tab in Add Connection dialog with device scanning, signal strength indicators, and connection history
+
 ## [0.3.1] - 2026-03-26
 
 ### Added

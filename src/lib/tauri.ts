@@ -124,3 +124,21 @@ export async function sendTextMessage(
     emoji: emoji ?? null,
   });
 }
+
+// BLE
+export interface BleDeviceInfo {
+  name: string;
+  address: string;
+  rssi: number | null;
+}
+
+export async function scanBleDevices(): Promise<BleDeviceInfo[]> {
+  return invoke("scan_ble_devices");
+}
+
+export async function connectBle(
+  address: string,
+  label: string,
+): Promise<string> {
+  return invoke("connect_ble", { address, label });
+}
